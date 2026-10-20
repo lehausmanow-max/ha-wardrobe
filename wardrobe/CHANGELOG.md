@@ -1,5 +1,7 @@
 # Changelog
+## 0.1.1
 
+- Now installed from GitHub; no functional changes.
 ## 0.1.0
 
 First version.
