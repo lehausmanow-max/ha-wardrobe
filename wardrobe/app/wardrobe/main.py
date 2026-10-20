@@ -168,6 +168,14 @@ def enrich(conn, garments: list[dict]) -> list[dict]:
         wash_after = int((g.get("care") or {}).get("wash_after") or 0)
         g["wash_due"] = bool(wash_after and g["wears_since_wash"] >= wash_after and g["status"] == "active")
         g["color_names"] = [colors.name_of(c) for c in g.get("colors") or []]
+        # Bleach shows only when it was read from a care label (see care.label_bleach). Garments
+        # saved before 0.2.0 carry no marker; for those a care-label photo counts as one.
+        c = g.get("care") or {}
+        if "bleach_from_label" not in c and c.get("bleach"):
+            c["bleach_from_label"] = any(p["kind"] == "label" for p in g["photos"])
+        if not (c.get("bleach") and c.get("bleach_from_label")):
+            c.pop("bleach", None)
+            c.pop("bleach_from_label", None)
     return garments
 
 
@@ -323,6 +331,7 @@ async def api_garments(request: Request):
             vals["profile_id"] = pid
             if not vals.get("care") or not vals["care"].get("wash"):
                 vals["care"] = care.defaults_for(vals.get("material", ""), vals["category"])
+            vals["care"] = care.label_bleach(vals["care"], {})
             gid = db.insert(conn, "garments", vals)
             return ok(get_garment(conn, gid), 201)
 
@@ -358,6 +367,8 @@ async def api_garment(request: Request):
             return ok({"deleted": gid})
         if request.method == "PUT":
             vals = clean_garment(await body(request), partial=True)
+            if "care" in vals:
+                vals["care"] = care.label_bleach(vals["care"], g.get("care") or {})
             vals["updated_at"] = db.now()
             db.update(conn, "garments", gid, vals)
             return ok(get_garment(conn, gid))
@@ -464,6 +475,12 @@ async def api_care_label(request: Request):
         except ai.AIError as exc:
             fail(502, f"Couldn't read the label: {exc}")
         new_care = {**(g.get("care") or {}), **result["care"]}
+        # The label decides bleach: a symbol read now replaces the old value, no symbol clears it.
+        new_care.pop("bleach_from_label", None)
+        if new_care.get("bleach"):
+            new_care["bleach_from_label"] = True
+        else:
+            new_care.pop("bleach", None)
         if not new_care.get("wash_after"):
             new_care["wash_after"] = care.defaults_for(result["composition"] or g.get("material", ""),
                                                        g["category"])["wash_after"]

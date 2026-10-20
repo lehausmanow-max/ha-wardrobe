@@ -6,51 +6,64 @@ from . import colors
 
 # Most delicate first: in a blend, the most delicate fibre sets the rules.
 MATERIAL_CARE = [
-    ("leather", {"wash": "no_wash", "temp": None, "cycle": "normal", "bleach": "no", "dry": "line",
+    ("leather", {"wash": "no_wash", "temp": None, "cycle": "normal", "dry": "line",
                  "iron": "no", "dry_clean": "any", "notes": "Specialist clean only; condition twice a year",
                  "wash_after": 0}),
-    ("suede", {"wash": "no_wash", "temp": None, "cycle": "normal", "bleach": "no", "dry": "line",
+    ("suede", {"wash": "no_wash", "temp": None, "cycle": "normal", "dry": "line",
                "iron": "no", "dry_clean": "any", "notes": "Brush dry; protect with spray", "wash_after": 0}),
-    ("silk", {"wash": "hand", "temp": 30, "cycle": "delicate", "bleach": "no", "dry": "line",
+    ("silk", {"wash": "hand", "temp": 30, "cycle": "delicate", "dry": "line",
               "iron": "low", "dry_clean": "P", "notes": "Mild detergent, no wringing", "wash_after": 3}),
-    ("cashmere", {"wash": "hand", "temp": 30, "cycle": "wool", "bleach": "no", "dry": "flat",
+    ("cashmere", {"wash": "hand", "temp": 30, "cycle": "wool", "dry": "flat",
                   "iron": "low", "dry_clean": "P", "notes": "Dry flat; store folded, never hung",
                   "wash_after": 6}),
-    ("wool", {"wash": "machine", "temp": 30, "cycle": "wool", "bleach": "no", "dry": "flat",
+    ("wool", {"wash": "machine", "temp": 30, "cycle": "wool", "dry": "flat",
               "iron": "low", "dry_clean": "P", "notes": "Wool programme; air between wears",
               "wash_after": 6}),
-    ("merino", {"wash": "machine", "temp": 30, "cycle": "wool", "bleach": "no", "dry": "flat",
+    ("merino", {"wash": "machine", "temp": 30, "cycle": "wool", "dry": "flat",
                 "iron": "low", "dry_clean": "P", "notes": "Wool programme", "wash_after": 5}),
-    ("down", {"wash": "machine", "temp": 30, "cycle": "delicate", "bleach": "no", "dry": "tumble_low",
+    ("down", {"wash": "machine", "temp": 30, "cycle": "delicate", "dry": "tumble_low",
               "iron": "no", "dry_clean": "no", "notes": "Tumble low with dryer balls to re-loft",
               "wash_after": 0}),
-    ("viscose", {"wash": "hand", "temp": 30, "cycle": "delicate", "bleach": "no", "dry": "line",
+    ("viscose", {"wash": "hand", "temp": 30, "cycle": "delicate", "dry": "line",
                  "iron": "low", "dry_clean": "P", "notes": "Shrinks when hot", "wash_after": 2}),
-    ("rayon", {"wash": "hand", "temp": 30, "cycle": "delicate", "bleach": "no", "dry": "line",
+    ("rayon", {"wash": "hand", "temp": 30, "cycle": "delicate", "dry": "line",
                "iron": "low", "dry_clean": "P", "notes": "Shrinks when hot", "wash_after": 2}),
-    ("linen", {"wash": "machine", "temp": 40, "cycle": "normal", "bleach": "non_chlorine",
+    ("linen", {"wash": "machine", "temp": 40, "cycle": "normal",
                "dry": "line", "iron": "high", "dry_clean": "any", "notes": "Iron while damp",
                "wash_after": 2}),
-    ("denim", {"wash": "machine", "temp": 30, "cycle": "normal", "bleach": "no", "dry": "line",
+    ("denim", {"wash": "machine", "temp": 30, "cycle": "normal", "dry": "line",
                "iron": "medium", "dry_clean": "any", "notes": "Inside out, cold, rarely",
                "wash_after": 10}),
-    ("elastane", {"wash": "machine", "temp": 30, "cycle": "delicate", "bleach": "no", "dry": "line",
+    ("elastane", {"wash": "machine", "temp": 30, "cycle": "delicate", "dry": "line",
                   "iron": "low", "dry_clean": "no", "notes": "Heat kills stretch", "wash_after": 2}),
-    ("polyester", {"wash": "machine", "temp": 40, "cycle": "normal", "bleach": "no",
+    ("polyester", {"wash": "machine", "temp": 40, "cycle": "normal",
                    "dry": "tumble_low", "iron": "low", "dry_clean": "P", "notes": "", "wash_after": 2}),
-    ("nylon", {"wash": "machine", "temp": 30, "cycle": "normal", "bleach": "no", "dry": "line",
+    ("nylon", {"wash": "machine", "temp": 30, "cycle": "normal", "dry": "line",
                "iron": "low", "dry_clean": "P", "notes": "", "wash_after": 2}),
-    ("cotton", {"wash": "machine", "temp": 40, "cycle": "normal", "bleach": "non_chlorine",
+    ("cotton", {"wash": "machine", "temp": 40, "cycle": "normal",
                 "dry": "tumble_low", "iron": "high", "dry_clean": "any",
                 "notes": "Darks at 30 °C to keep colour", "wash_after": 2}),
 ]
 
-GENERIC = {"wash": "machine", "temp": 30, "cycle": "normal", "bleach": "no", "dry": "line",
+GENERIC = {"wash": "machine", "temp": 30, "cycle": "normal", "dry": "line",
            "iron": "low", "dry_clean": "any", "notes": "", "wash_after": 2}
 
 # Sensible wear counts between washes, by category, when the fibre doesn't decide it.
 CATEGORY_WASH_AFTER = {"top": 1, "knitwear": 5, "bottom": 4, "dress": 2,
                        "outerwear": 0, "shoes": 0, "accessory": 0}
+
+
+def label_bleach(new: dict, old: dict) -> dict:
+    """Bleach is recorded only from a care label, never chosen by hand or set by defaults.
+
+    The edit form has no bleach field, so a bleach value read from the label is carried over
+    from the stored care (`old`) and anything else sent in `new` is dropped.
+    """
+    out = {k: v for k, v in new.items() if k not in ("bleach", "bleach_from_label")}
+    if old.get("bleach") and old.get("bleach_from_label"):
+        out["bleach"] = old["bleach"]
+        out["bleach_from_label"] = True
+    return out
 
 
 def defaults_for(material: str, category: str = "") -> dict:

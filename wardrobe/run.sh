@@ -5,6 +5,8 @@ bashio::log.info "Starting Wardrobe $(bashio::addon.version)"
 bashio::log.info "Photo AI: $(bashio::config 'ai_vision_provider'), text AI: $(bashio::config 'ai_text_provider')"
 
 export WARDROBE_DATA_DIR=/data
+WARDROBE_VERSION="$(bashio::addon.version)"
+export WARDROBE_VERSION
 # Only the Home Assistant Ingress proxy may talk to the app.
 export WARDROBE_INGRESS_ONLY=1
 

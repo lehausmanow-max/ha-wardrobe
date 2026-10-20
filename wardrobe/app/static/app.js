@@ -49,33 +49,171 @@ async function busy(btn, fn) {
 }
 
 // ------------------------------------------------------------------ theme
+// Inside Home Assistant the app follows the HA theme. Ingress serves the app from the same origin
+// as the HA frontend around it, so the frame can read that theme's CSS variables and copy them
+// onto its own tokens. Outside HA (local development) the app's own palette is used.
+const HA_TOKENS = {
+  "--rail": ["--primary-background-color"],
+  "--tag": ["--ha-card-background", "--card-background-color"],
+  "--field": ["--ha-color-form-background"],
+  "--ink": ["--primary-text-color"],
+  "--muted": ["--secondary-text-color"],
+  "--line": ["--divider-color"],
+  "--indigo": ["--primary-color"],
+  "--indigo-ink": ["--text-primary-color"],
+  "--selvedge": ["--error-color"],
+  "--ok": ["--success-color"],
+  "--warn": ["--warning-color"],
+  "--fav": ["--warning-color"],
+  "--r": ["--ha-card-border-radius"],
+  "--body": ["--ha-font-family-body", "--paper-font-body1_-_font-family", "--mdc-typography-font-family"],
+};
+const appearance = () => store.get("appearance", "ha");
+
+// The nearest same-origin frame around this one that carries an HA theme, or null.
+function haRoot() {
+  let w = window;
+  try {
+    while (w !== w.parent) {
+      w = w.parent;
+      const root = w.document.documentElement; // throws once a frame is cross-origin
+      if (w.getComputedStyle(root).getPropertyValue("--primary-text-color").trim()) return root;
+    }
+  } catch { /* cross-origin: no theme to follow */ }
+  return null;
+}
+
+function isDarkColour(value) {
+  const probe = document.createElement("i");
+  probe.style.color = value;
+  document.body.append(probe);
+  const m = getComputedStyle(probe).color.match(/[\d.]+/g);
+  probe.remove();
+  if (!m || m.length < 3) return null;
+  const [r, g, b] = m.slice(0, 3).map((x) => Number(x) / 255);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.45;
+}
+
+function applyHaTheme(root) {
+  const cs = root.ownerDocument.defaultView.getComputedStyle(root);
+  const de = document.documentElement;
+  for (const [mine, theirs] of Object.entries(HA_TOKENS)) {
+    const v = theirs.map((n) => cs.getPropertyValue(n).trim()).find(Boolean);
+    if (v) de.style.setProperty(mine, v); else de.style.removeProperty(mine);
+  }
+  const dark = isDarkColour(cs.getPropertyValue("--primary-background-color").trim()) ?? /dark/.test(cs.colorScheme || "");
+  de.dataset.theme = dark ? "dark" : "light";
+  de.dataset.ha = "";
+}
+
+// HA's font (Roboto) is loaded by the HA page; copy its @font-face rules so the frame can use it too.
+function borrowFonts(doc) {
+  if (document.getElementById("ha-fonts")) return;
+  const css = [];
+  for (const sheet of doc.styleSheets) {
+    let rules;
+    try { rules = sheet.cssRules; } catch { continue; }
+    const base = sheet.href || doc.baseURI;
+    for (const r of rules) {
+      if (r.type !== 5) continue; // CSSRule.FONT_FACE_RULE
+      css.push(r.cssText.replace(/url\((['"]?)([^'")]+)\1\)/g, (_, q, u) => {
+        try { return `url("${new URL(u, base).href}")`; } catch { return `url("${u}")`; }
+      }));
+    }
+  }
+  if (!css.length) return;
+  const st = document.createElement("style");
+  st.id = "ha-fonts"; st.textContent = css.join("\n");
+  document.head.append(st);
+}
+
+// Re-apply when the HA theme changes: a theme switch, dark mode, or the device's light/dark setting.
+let haWatch = null, haQueued = false;
+function reapplyHaTheme() {
+  if (haQueued) return;
+  haQueued = true;
+  requestAnimationFrame(() => {
+    haQueued = false;
+    const root = haWatch?.root;
+    if (root && root.isConnected && appearance() === "ha") applyHaTheme(root);
+  });
+}
+function watchHaTheme(root) {
+  if (haWatch?.root === root) return;
+  if (haWatch) haWatch.observer.disconnect();
+  else matchMedia("(prefers-color-scheme: dark)").addEventListener("change", reapplyHaTheme);
+  const observer = new MutationObserver(reapplyHaTheme);
+  observer.observe(root, { attributes: true, attributeFilter: ["style", "class"] });
+  if (root.ownerDocument.head) observer.observe(root.ownerDocument.head, { childList: true, subtree: true, characterData: true });
+  haWatch = { root, observer };
+}
+
 function applyTheme() {
-  const t = store.get("theme", "auto");
-  if (t === "auto") document.documentElement.removeAttribute("data-theme");
-  else document.documentElement.setAttribute("data-theme", t);
+  const pref = appearance();
+  const de = document.documentElement;
+  for (const k of Object.keys(HA_TOKENS)) de.style.removeProperty(k);
+  delete de.dataset.ha;
+  const root = pref === "ha" ? haRoot() : null;
+  if (root) {
+    applyHaTheme(root);
+    try { borrowFonts(root.ownerDocument); } catch { /* fonts fall back to the system's */ }
+    watchHaTheme(root);
+    return;
+  }
+  if (pref === "light" || pref === "dark") de.dataset.theme = pref;
+  else delete de.dataset.theme;
 }
 
 // ------------------------------------------------------------------ sheets
 const sheets = [];
 const ICON_X = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>`;
+const ICON_STAR = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.6 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8Z"/></svg>`;
 function openSheet(title, html) {
   const el = document.createElement("section");
   el.className = "sheet"; el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", title);
-  el.innerHTML = `<div class="sheet-head"><h2>${esc(title)}</h2><button class="icon-btn" data-action="close-sheet" aria-label="Close">${ICON_X}</button></div><div class="sheet-body">${html}</div>`;
+  el.innerHTML = `<div class="sheet-head"><h2>${esc(title)}</h2><span class="head-extra"></span><button class="icon-btn" data-action="close-sheet" aria-label="Close">${ICON_X}</button></div><div class="sheet-body">${html}</div>`;
   $("#sheets").append(el); sheets.push(el);
   $("#backdrop").hidden = false; document.body.style.overflow = "hidden";
   setTimeout(() => (el.querySelector("[autofocus]") || el.querySelector(".sheet-head button")).focus({ preventScroll: true }), 30);
+  scheduleHistorySync();
   return el;
 }
-function fillSheet(el, title, html) {
+function fillSheet(el, title, html, headExtra = "") {
   $(".sheet-head h2", el).textContent = title;
+  $(".sheet-head .head-extra", el).innerHTML = headExtra;
   $(".sheet-body", el).innerHTML = html;
 }
 function closeSheet() {
   const el = sheets.pop();
   if (el) { el.dispatchEvent(new Event("sheetclose")); el.remove(); }
   if (!sheets.length) { $("#backdrop").hidden = true; document.body.style.overflow = ""; }
+  scheduleHistorySync();
 }
+
+// Each open sheet has its own browser history entry, so a back swipe (or the Android back button)
+// closes the top sheet instead of leaving the app. history.state.ws is the number of sheets open at
+// that entry; after any open or close, the history is brought in line with the sheets on screen.
+let historyBusy = false, historySyncTimer = 0, historyBusyTimer = 0;
+const historyDepth = () => (history.state && history.state.ws) || 0;
+function scheduleHistorySync() { if (!historySyncTimer) historySyncTimer = setTimeout(syncHistory, 0); }
+function syncHistory() {
+  historySyncTimer = 0;
+  if (historyBusy) return; // the popstate of our own history.go() syncs again
+  const d = historyDepth(), n = sheets.length;
+  if (n > d) for (let i = d + 1; i <= n; i++) history.pushState({ ws: i }, "");
+  else if (n < d) {
+    historyBusy = true;
+    clearTimeout(historyBusyTimer);
+    historyBusyTimer = setTimeout(() => { historyBusy = false; }, 1500); // never stay stuck
+    history.go(n - d);
+  }
+}
+window.addEventListener("popstate", () => {
+  if (historyBusy) { historyBusy = false; clearTimeout(historyBusyTimer); scheduleHistorySync(); return; }
+  const d = historyDepth();
+  while (sheets.length > d) closeSheet(); // back: close sheets, one per step
+  scheduleHistorySync(); // forward onto a sheet that's gone: step back again
+});
 function closeAllSheets() { while (sheets.length) closeSheet(); }
 function confirmSheet(title, text, yes = "Delete") {
   return new Promise((resolve) => {
@@ -125,10 +263,11 @@ function careIcons(c = {}) {
   else if (w === "hand") sym(tub + `<path d="M12 23v-6a1 1 0 0 1 2 0v3-5a1 1 0 0 1 2 0v5-5.5a1 1 0 0 1 2 0V20v-3a1 1 0 0 1 2 0v4c0 2-1.5 3.5-3.5 3.5h-1.5c-1.5 0-3-1-3-2.5"/>`, `Hand wash${c.temp ? " " + c.temp + "°" : ""}`);
   else if (w === "dry_clean") sym(tub + cross, "Don't wash, dry clean");
   else sym(tub + cross, w === "spot" ? "Spot clean only" : "Do not wash");
+  // Bleach shows only when it was read from the care label; the server leaves it out otherwise.
   const tri = `<path d="M16 5 29 28H3Z"/>`;
   if (c.bleach === "any") sym(tri, "Any bleach");
   else if (c.bleach === "non_chlorine") sym(tri + `<path d="M13 25 18 15M17 25l5-10"/>`, "Oxygen bleach only");
-  else sym(tri + cross, "No bleach");
+  else if (c.bleach === "no") sym(tri + cross, "No bleach");
   const sq = `<rect x="4" y="5" width="24" height="24" rx="1"/>`;
   const d = c.dry || "line";
   if (d === "tumble_low") sym(sq + `<circle cx="16" cy="17" r="8"/><circle cx="16" cy="17" r="1.2" fill="currentColor"/>`, "Tumble low");
@@ -301,7 +440,8 @@ async function openGarment(id, existing) {
     ${g.looks.length ? `<div class="section-title">In saved looks</div><p class="small">${g.looks.map((l) => esc(l.name || "Untitled look")).join(", ")}</p>` : ""}
     ${g.notes ? `<div class="section-title">Notes</div><p class="small prose">${esc(g.notes)}</p>` : ""}
     <div class="actions" style="margin-top:26px"><button class="btn danger" data-action="delete-garment" data-id="${g.id}">Delete garment</button>
-      ${g.status !== "archived" ? `<button class="btn" data-action="archive" data-id="${g.id}">Archive (gave away, sold)</button>` : ""}</div>`);
+      ${g.status !== "archived" ? `<button class="btn" data-action="archive" data-id="${g.id}">Archive (gave away, sold)</button>` : ""}</div>`,
+    `<button class="icon-btn fav" data-action="favorite" data-id="${g.id}" aria-pressed="${!!g.favorite}" aria-label="Favourite" title="Favourite">${ICON_STAR}</button>`);
   el.dataset.garment = g.id;
   return g;
 }
@@ -327,7 +467,10 @@ function garmentForm(g, isNew) {
     ${g.intake ? (g.intake.used ? `<div class="note small">Filled in from the photo by ${esc(g.intake.provider)}. Check it before saving.</div>`
       : g.intake.error ? `<div class="note warn small">The AI couldn't read the photo (${esc(g.intake.error)}). Colours came from the photo; fill in the rest.</div>`
       : `<div class="note small">Colours were read from the photo. Fill in the rest.</div>`) : ""}
-    <label class="field"><span>Name</span><input type="text" name="name" required value="${esc(g.name === "New garment" ? "" : g.name)}" placeholder="Navy merino crewneck" autofocus></label>
+    <div class="name-row">
+      <label class="field"><span>Name</span><input type="text" name="name" required value="${esc(g.name === "New garment" ? "" : g.name)}" placeholder="Navy merino crewneck" autofocus></label>
+      <label class="fav-toggle" title="Favourite"><input type="checkbox" name="favorite" aria-label="Favourite" ${g.favorite ? "checked" : ""}>${ICON_STAR}</label>
+    </div>
     <div class="grid2">
       <label class="field"><span>Category</span><select name="category">${opt(Object.keys(t.categories), cat, Object.fromEntries(Object.entries(t.categories).map(([k, v]) => [k, v.label])))}</select></label>
       <label class="field"><span>Type</span><select name="subcategory"><option value="">-</option>${opt(t.categories[cat].sub, g.subcategory)}</select></label>
@@ -356,7 +499,6 @@ function garmentForm(g, isNew) {
       ${careSel("wash", { title: "Washing", machine: "Machine", hand: "Hand wash", dry_clean: "Dry clean only", spot: "Spot clean", no_wash: "Do not wash" })}
       ${careSel("temp", { title: "Max temperature", 20: "20 °C", 30: "30 °C", 40: "40 °C", 60: "60 °C", 90: "90 °C" })}
       ${careSel("cycle", { title: "Programme" })}
-      ${careSel("bleach", { title: "Bleach", any: "Any", non_chlorine: "Oxygen only", no: "No bleach" })}
       ${careSel("dry", { title: "Drying", tumble_normal: "Tumble normal", tumble_low: "Tumble low", no_tumble: "No tumble", line: "Line dry", flat: "Dry flat" })}
       ${careSel("iron", { title: "Ironing", no: "Do not iron" })}
       ${careSel("dry_clean", { title: "Dry cleaning", any: "Allowed", P: "P solvent", F: "F solvent", no: "Not allowed" })}
@@ -373,7 +515,6 @@ function garmentForm(g, isNew) {
       <label class="field"><span>Price (€)</span><input type="number" step="0.01" min="0" name="price" value="${esc(g.price ?? "")}"></label>
       <label class="field"><span>Bought on</span><input type="date" name="purchase_date" value="${esc(g.purchase_date || "")}"></label>
     </div>
-    <label class="chip" style="align-self:start"><input type="checkbox" name="favorite" ${g.favorite ? "checked" : ""}>Favourite</label>
     <label class="field"><span>Notes</span><textarea name="notes">${esc(g.notes)}</textarea></label>
     <div class="actions"><button class="btn primary" type="submit">Save</button>
       ${isNew && g.id ? `<button class="btn danger" type="button" data-action="discard-draft" data-id="${g.id}">Discard</button>` : `<button class="btn" type="button" data-action="close-sheet">Cancel</button>`}</div>
@@ -406,7 +547,7 @@ function editGarment(g, isNew = false, existing = null) {
 function readGarmentForm(form) {
   const f = new FormData(form);
   const care = {};
-  for (const k of ["wash", "temp", "cycle", "bleach", "dry", "iron", "dry_clean"]) { const v = f.get("care_" + k); if (v) care[k] = k === "temp" ? Number(v) : v; }
+  for (const k of ["wash", "temp", "cycle", "dry", "iron", "dry_clean"]) { const v = f.get("care_" + k); if (v) care[k] = k === "temp" ? Number(v) : v; }
   care.wash_after = Number(f.get("care_wash_after") || 0);
   care.notes = f.get("care_notes") || "";
   const measurements = {};
@@ -706,7 +847,8 @@ async function renderShop(main) {
 function settingsSheet() {
   const ai = S.meta.ai;
   const aiLine = (k, what) => ai[k].enabled ? `${what}: ${cap(ai[k].provider)}${ai[k].model ? ` (${esc(ai[k].model)})` : ""}` : `${what}: off`;
-  const theme = store.get("theme", "auto");
+  const look = appearance();
+  const inHa = !!haRoot();
   const el = openSheet("Settings", `
     <h3>People</h3>
     <div class="stack" style="margin-top:10px">${S.meta.profiles.map((p) => `
@@ -720,7 +862,8 @@ function settingsSheet() {
       <form class="row" id="addprofile"><input type="text" name="name" placeholder="Add a person" style="flex:1" required><button class="btn" type="submit">Add</button></form>
     </div>
     <h3 style="margin-top:24px">Appearance</h3>
-    <div class="seg" style="margin-top:8px;max-width:320px">${["auto", "light", "dark"].map((t) => `<label><input type="radio" name="theme" value="${t}" ${theme === t ? "checked" : ""} data-change="theme">${cap(t)}</label>`).join("")}</div>
+    <div class="seg" style="margin-top:8px;max-width:400px">${[["ha", "HA theme"], ["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]].map(([v, l]) => `<label><input type="radio" name="appearance" value="${v}" ${look === v ? "checked" : ""} data-change="appearance">${l}</label>`).join("")}</div>
+    <p class="small muted">${inHa ? "HA theme follows the theme you use in Home Assistant, dark mode included." : "Not running inside Home Assistant here, so HA theme falls back to Auto."} Auto, Light and Dark use the app's own colours.</p>
     <h3 style="margin-top:24px">AI and Home Assistant</h3>
     <p class="small">${aiLine("vision", "Reading photos")}<br>${aiLine("text", "Styling and shopping advice")}<br>
       Weather: ${S.meta.weather_configured ? "from Home Assistant" : "not set"}${S.meta.ha_user?.name ? `<br>Signed in to Home Assistant as ${esc(S.meta.ha_user.display_name || S.meta.ha_user.name)}` : ""}</p>
@@ -764,6 +907,15 @@ const actions = {
   archive: async (b) => { await api("PUT", `api/garments/${b.dataset.id}`, { status: "archived" }); closeAllSheets(); toast("Archived"); route(); },
   wear: (b) => busy(b, async () => { await api("POST", `api/garments/${b.dataset.id}/wear`, {}); toast("Logged for today"); await refreshAfterChange(); }),
   "style-this": (b) => { S.anchor = { id: Number(b.dataset.id), name: b.dataset.name }; S.suggestions = null; closeAllSheets(); if (currentView() === "looks") route(); else location.hash = "#/looks"; },
+  favorite: async (b) => {
+    const on = b.getAttribute("aria-pressed") !== "true";
+    b.setAttribute("aria-pressed", on);
+    try { await api("PUT", `api/garments/${b.dataset.id}`, { favorite: on }); }
+    catch (e) { b.setAttribute("aria-pressed", !on); throw e; }
+    const g = S.garments.find((x) => x.id === Number(b.dataset.id));
+    if (g) g.favorite = on ? 1 : 0;
+    toast(on ? "Marked as a favourite" : "No longer a favourite");
+  },
   "fit-log": (b) => fitLogSheet(b.dataset.id),
   "del-fitlog": async (b) => { await api("DELETE", `api/fit-logs/${b.dataset.id}`); refreshAfterChange(); },
   "add-photo": (b) => { const inp = $("#photo-file"); inp.dataset.garment = b.dataset.id; inp.dataset.kind = b.dataset.kind; inp.click(); },
@@ -772,7 +924,7 @@ const actions = {
   "care-defaults": async () => {
     const form = $("#gform");
     const c = await api("GET", `api/care/defaults?material=${encodeURIComponent(form.material.value)}&category=${form.category.value}`);
-    for (const k of ["wash", "temp", "cycle", "bleach", "dry", "iron", "dry_clean"]) if (form["care_" + k]) form["care_" + k].value = c[k] ?? "";
+    for (const k of ["wash", "temp", "cycle", "dry", "iron", "dry_clean"]) if (form["care_" + k]) form["care_" + k].value = c[k] ?? "";
     form.care_wash_after.value = c.wash_after ?? 0; form.care_notes.value = c.notes || "";
     toast(form.material.value ? `Care set for ${form.material.value}` : "Generic care set; add the fabric for better defaults");
   },
@@ -817,7 +969,7 @@ document.addEventListener("change", (ev) => {
       .then(() => { toast({ active: "Back in the wardrobe", laundry: "In the wash", repair: "At the tailor", stored: "Stored away" }[el.value]); return refreshAfterChange(); })
       .catch(fail);
   } else if (el.dataset.change === "scope") { S.laundryAll = el.value === "all"; route(); }
-  else if (el.dataset.change === "theme") { store.set("theme", el.value); applyTheme(); }
+  else if (el.dataset.change === "appearance") { store.set("appearance", el.value); applyTheme(); }
 });
 
 $("#intake-file").addEventListener("change", (ev) => { const f = ev.target.files[0]; ev.target.value = ""; if (f) intake(f); });
@@ -831,6 +983,8 @@ window.addEventListener("hashchange", () => { closeAllSheets(); route(); });
 
 (async function boot() {
   applyTheme();
+  if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+  if (historyDepth()) history.replaceState(null, "");
   try { await loadMeta(); } catch (e) { $("#main").innerHTML = `<div class="empty"><h3>Can't reach the wardrobe service</h3><p class="muted">${esc(e.message)}</p></div>`; return; }
   route();
 })();

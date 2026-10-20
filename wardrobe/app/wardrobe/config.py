@@ -5,7 +5,8 @@ import logging
 import os
 from pathlib import Path
 
-VERSION = "0.1.0"
+# Set by run.sh from the installed app version; used to cache-bust the UI's CSS and JS.
+VERSION = os.environ.get("WARDROBE_VERSION") or "dev"
 
 DATA_DIR = Path(os.environ.get("WARDROBE_DATA_DIR", "/data"))
 MEDIA_DIR = DATA_DIR / "media"

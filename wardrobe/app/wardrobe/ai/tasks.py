@@ -76,7 +76,7 @@ Read it and return JSON with:
 - "wash": one of {f['wash']}  (tub = machine, hand in tub = hand, crossed tub = no_wash)
 - "temp": maximum wash temperature in °C, one of {f['temp']} or null (dots: 1=30, 2=40, 3=50/60)
 - "cycle": one of {f['cycle']} (one bar under tub = delicate, two bars = wool/very gentle)
-- "bleach": one of {f['bleach']}
+- "bleach": one of {f['bleach']}, or null if the label has no bleach symbol
 - "dry": one of {f['dry']} (square with circle = tumble; dots = heat; crossed = no_tumble; square with line = line/flat)
 - "iron": one of {f['iron']} (dots: 1=low, 2=medium, 3=high)
 - "dry_clean": one of {f['dry_clean']}
@@ -95,7 +95,7 @@ Read it and return JSON with:
         "wash": _pick(data.get("wash"), f["wash"], "machine"),
         "temp": temp,
         "cycle": _pick(data.get("cycle"), f["cycle"], "normal"),
-        "bleach": _pick(data.get("bleach"), f["bleach"], "no"),
+        "bleach": _pick(data.get("bleach"), f["bleach"], None),
         "dry": _pick(data.get("dry"), f["dry"], "line"),
         "iron": _pick(data.get("iron"), f["iron"], "medium"),
         "dry_clean": _pick(data.get("dry_clean"), [x.lower() for x in f["dry_clean"]], "any"),

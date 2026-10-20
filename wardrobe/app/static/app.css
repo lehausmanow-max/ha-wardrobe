@@ -12,6 +12,11 @@
   --selvedge: #b8322c;
   --ok: #2f6b45;
   --warn: #8a5a0b;
+  --fav: #c98a12;
+  --field: var(--tag);
+  --sel-bg: var(--ink);
+  --sel-ink: var(--rail);
+  --active: var(--selvedge);
   --shadow: 0 1px 0 rgba(28, 33, 40, .06), 0 8px 24px -12px rgba(28, 33, 40, .25);
   --label: "Avenir Next Condensed", "Roboto Condensed", "Arial Narrow", sans-serif-condensed, system-ui, sans-serif;
   --body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
@@ -24,14 +29,14 @@
   :root:not([data-theme="light"]) {
     --rail: #14171b; --tag: #1f2328; --ink: #e8eaed; --muted: #9aa3ad; --line: #30363d;
     --indigo: #8fa4e8; --indigo-ink: #10162b; --indigo-soft: #232b45; --selvedge: #e0645c;
-    --ok: #7cc79a; --warn: #e3b25c; --shadow: 0 8px 24px -12px rgba(0, 0, 0, .6);
+    --ok: #7cc79a; --warn: #e3b25c; --fav: #e8b54d; --shadow: 0 8px 24px -12px rgba(0, 0, 0, .6);
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --rail: #14171b; --tag: #1f2328; --ink: #e8eaed; --muted: #9aa3ad; --line: #30363d;
   --indigo: #8fa4e8; --indigo-ink: #10162b; --indigo-soft: #232b45; --selvedge: #e0645c;
-  --ok: #7cc79a; --warn: #e3b25c; --shadow: 0 8px 24px -12px rgba(0, 0, 0, .6);
+  --ok: #7cc79a; --warn: #e3b25c; --fav: #e8b54d; --shadow: 0 8px 24px -12px rgba(0, 0, 0, .6);
   color-scheme: dark;
 }
 
@@ -78,7 +83,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 }
 .tabs a[aria-current="page"] { color: var(--ink); }
 .tabs a[aria-current="page"]::before {
-  content: ""; position: absolute; top: 0; left: 28%; right: 28%; height: 2px; background: var(--selvedge);
+  content: ""; position: absolute; top: 0; left: 28%; right: 28%; height: 2px; background: var(--active);
 }
 
 main { padding: 12px var(--gutter) 96px; max-width: 1100px; margin: 0 auto; outline: none; }
@@ -108,7 +113,7 @@ h3 { font-size: 17px; }
 
 input[type=text], input[type=number], input[type=search], input[type=date], input[type=url], select, textarea {
   width: 100%; min-height: 42px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
-  background: var(--tag);
+  background: var(--field);
 }
 textarea { min-height: 72px; resize: vertical; }
 label.field { display: block; }
@@ -121,21 +126,21 @@ label.field > span { display: block; font-size: 13px; color: var(--muted); margi
   flex: none; border: 1px solid var(--line); background: var(--tag); border-radius: 999px;
   padding: 6px 12px; cursor: pointer; white-space: nowrap; font-size: 14px;
 }
-.chip[aria-pressed="true"] { background: var(--ink); color: var(--rail); border-color: var(--ink); }
+.chip[aria-pressed="true"] { background: var(--sel-bg); color: var(--sel-ink); border-color: var(--sel-bg); }
 .chip .count { color: var(--muted); margin-left: 4px; font-variant-numeric: tabular-nums; }
 .chip[aria-pressed="true"] .count { color: inherit; opacity: .7; }
 
 .seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--tag); }
 .seg button { flex: 1; border: 0; background: none; padding: 8px 4px; cursor: pointer; font-size: 13px; }
 .seg button + button { border-left: 1px solid var(--line); }
-.seg button[aria-pressed="true"] { background: var(--ink); color: var(--rail); }
+.seg button[aria-pressed="true"] { background: var(--sel-bg); color: var(--sel-ink); }
 
 .dots { display: inline-flex; gap: 3px; vertical-align: middle; }
 .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
 .dots i.on { background: var(--ink); }
 .dotpick { display: flex; gap: 6px; }
 .dotpick button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--tag); cursor: pointer; font-variant-numeric: tabular-nums; }
-.dotpick button[aria-pressed="true"] { background: var(--ink); color: var(--rail); border-color: var(--ink); }
+.dotpick button[aria-pressed="true"] { background: var(--sel-bg); color: var(--sel-ink); border-color: var(--sel-bg); }
 
 .swatch { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0,0,0,.15); display: inline-block; vertical-align: middle; }
 .swatches { display: inline-flex; gap: 4px; align-items: center; }
@@ -257,6 +262,7 @@ button.linkish { all: unset; cursor: pointer; display: flex; gap: 12px; align-it
   background: var(--rail); border-bottom: 1px solid var(--line); margin-bottom: 14px;
 }
 .sheet-head h2 { margin: 0; flex: 1; font-size: 20px; }
+.head-extra { display: contents; }
 .gallery { display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x mandatory; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); scrollbar-width: none; }
 .gallery figure { margin: 0; flex: none; width: min(78%, 320px); scroll-snap-align: start; position: relative; }
 .gallery img { width: 100%; aspect-ratio: 4 / 5; object-fit: cover; border-radius: var(--r); background: var(--tag); }
@@ -293,14 +299,14 @@ button.linkish { all: unset; cursor: pointer; display: flex; gap: 12px; align-it
 /* ------------------------------------------------ native inputs styled as chips, dots and segments */
 .chip input, .dotpick input, .seg input { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
 label.chip { position: relative; }
-label.chip:has(input:checked) { background: var(--ink); color: var(--rail); border-color: var(--ink); }
+label.chip:has(input:checked) { background: var(--sel-bg); color: var(--sel-ink); border-color: var(--sel-bg); }
 label.chip:has(input:focus-visible), .dotpick label:has(input:focus-visible), .seg label:has(input:focus-visible) { outline: 2px solid var(--indigo); outline-offset: 2px; }
 .chips.wrap { flex-wrap: wrap; overflow: visible; margin: 0; padding: 0; }
 .dotpick label { position: relative; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--tag); cursor: pointer; display: grid; place-items: center; font-variant-numeric: tabular-nums; }
-.dotpick label:has(input:checked) { background: var(--ink); color: var(--rail); border-color: var(--ink); }
+.dotpick label:has(input:checked) { background: var(--sel-bg); color: var(--sel-ink); border-color: var(--sel-bg); }
 .seg label { position: relative; flex: 1; text-align: center; padding: 8px 4px; cursor: pointer; font-size: 13px; }
 .seg label + label { border-left: 1px solid var(--line); }
-.seg label:has(input:checked) { background: var(--ink); color: var(--rail); }
+.seg label:has(input:checked) { background: var(--sel-bg); color: var(--sel-ink); }
 fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 legend { font-size: 13px; color: var(--muted); margin-bottom: 6px; padding: 0; }
 .form-grid { display: grid; gap: 14px; }
@@ -308,3 +314,34 @@ legend { font-size: 13px; color: var(--muted); margin-bottom: 6px; padding: 0; }
 
 .panel .list { border: 0; border-radius: 0; background: transparent; }
 .panel .list > li { padding: 10px 0; }
+
+/* ------------------------------------------------ favourite star */
+.fav { color: var(--muted); }
+.fav svg, .fav-toggle svg { width: 20px; height: 20px; }
+.fav[aria-pressed="true"], .fav-toggle:has(input:checked) { color: var(--fav); }
+.fav[aria-pressed="true"] svg, .fav-toggle:has(input:checked) svg { fill: currentColor; }
+.name-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: end; }
+.fav-toggle { position: relative; width: 42px; height: 42px; display: grid; place-items: center; border-radius: 8px; cursor: pointer; color: var(--muted); }
+.fav-toggle:hover { background: var(--tag); }
+.fav-toggle input { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
+.fav-toggle:has(input:focus-visible) { outline: 2px solid var(--indigo); outline-offset: 2px; }
+
+/* ------------------------------------------------ inside Home Assistant: follow its theme
+   app.js copies the HA theme's colours, card radius and font onto :root and sets data-ha.
+   Here the shapes follow HA too: plain rounded cards, HA's font for headings, primary for selection. */
+:root[data-ha] {
+  --label: var(--body);
+  --indigo-soft: color-mix(in srgb, var(--indigo) 14%, var(--tag));
+  --sel-bg: var(--indigo);
+  --sel-ink: var(--indigo-ink);
+  --active: var(--indigo);
+}
+:root[data-ha] h1, :root[data-ha] h2, :root[data-ha] h3, :root[data-ha] .section-title { font-weight: 500; letter-spacing: 0; }
+:root[data-ha] .tag { clip-path: none; border-radius: var(--r); border: 1px solid var(--line); overflow: hidden; }
+:root[data-ha] .tag .hole { display: none; }
+:root[data-ha] .tag .info { border-top: 1px solid var(--line); }
+:root[data-ha] .tag .flag { top: 8px; }
+:root[data-ha] .tag .name { font-size: 15px; font-weight: 500; }
+:root[data-ha] .panel, :root[data-ha] .list, :root[data-ha] .look, :root[data-ha] .empty { border-radius: var(--r); }
+/* HA's warning colour is an icon amber; darken or lighten it for text. */
+:root[data-ha] .reasons li.warn, :root[data-ha] .band-snug, :root[data-ha] .band-roomy { color: color-mix(in srgb, var(--warn) 70%, var(--ink)); }
