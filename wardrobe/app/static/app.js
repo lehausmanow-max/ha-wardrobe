@@ -55,6 +55,11 @@ async function busy(btn, fn) {
 const HA_TOKENS = {
   "--rail": ["--primary-background-color"],
   "--tag": ["--ha-card-background", "--card-background-color"],
+  "--card-border": ["--ha-card-border-color"],
+  "--card-border-w": ["--ha-card-border-width"],
+  "--card-shadow": ["--ha-card-box-shadow"],
+  "--card-filter": ["--ha-card-backdrop-filter"],
+  "--scrim": ["--mdc-dialog-scrim-color"],
   "--field": ["--ha-color-form-background"],
   "--ink": ["--primary-text-color"],
   "--muted": ["--secondary-text-color"],
@@ -83,27 +88,91 @@ function haRoot() {
   return null;
 }
 
-function isDarkColour(value) {
+// Colours as [r, g, b, alpha], whatever CSS syntax the theme uses (rgb, hex, color-mix, oklch...).
+let colourCtx = null;
+function rgba(value) {
+  value = (value || "").trim();
+  if (!value) return null;
+  try {
+    colourCtx ||= Object.assign(document.createElement("canvas"), { width: 1, height: 1 }).getContext("2d", { willReadFrequently: true });
+    colourCtx.fillStyle = "#010203";
+    colourCtx.fillStyle = value;
+    if (colourCtx.fillStyle !== "#010203" || /^#010203$/i.test(value)) {
+      colourCtx.clearRect(0, 0, 1, 1);
+      colourCtx.fillRect(0, 0, 1, 1);
+      const d = colourCtx.getImageData(0, 0, 1, 1).data;
+      return [d[0], d[1], d[2], d[3] / 255];
+    }
+  } catch { /* fall through to the computed-style probe */ }
   const probe = document.createElement("i");
   probe.style.color = value;
+  if (!probe.style.color) return null;
   document.body.append(probe);
-  const m = getComputedStyle(probe).color.match(/[\d.]+/g);
+  const c = getComputedStyle(probe).color;
   probe.remove();
-  if (!m || m.length < 3) return null;
-  const [r, g, b] = m.slice(0, 3).map((x) => Number(x) / 255);
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.45;
+  let m = c.match(/^rgba?\(([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)(?:[ ,/]+([\d.]+))?/);
+  if (m) return [+m[1], +m[2], +m[3], m[4] === undefined ? 1 : +m[4]];
+  m = c.match(/^color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)(?: \/ ([\d.]+))?/);
+  if (m) return [m[1] * 255, m[2] * 255, m[3] * 255, m[4] === undefined ? 1 : +m[4]];
+  return null;
 }
+const over = (fg, bg) => fg[3] >= 1 || !bg ? fg : [0, 1, 2].map((i) => fg[i] * fg[3] + bg[i] * (1 - fg[3])).concat(1);
+function luminance(c) {
+  const [r, g, b] = c.slice(0, 3).map((v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+const contrast = (a, b) => { const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+
+// Text on the primary colour: the theme's own choice when it's readable, otherwise white or near-black.
+// (Some themes set text-primary-color to their body text colour, which can vanish on a light primary.)
+function inkOn(primary, themeInk, base) {
+  const bg = over(primary, base);
+  const options = [themeInk, "#ffffff", "#101317"].map((v) => [v, rgba(v)]).filter(([, c]) => c);
+  const ok = options.find(([, c]) => contrast(over(c, bg), bg) >= 4.5);
+  if (ok) return ok[0];
+  return options.sort((a, b) => contrast(over(b[1], bg), bg) - contrast(over(a[1], bg), bg))[0]?.[0] || "";
+}
+
+// url(...) in a theme value resolves against the HA page, not this frame.
+const absoluteUrls = (value, base) => value.replace(/url\((['"]?)([^'")]+)\1\)/g, (_, q, u) => {
+  try { return `url("${new URL(u, base).href}")`; } catch { return `url("${u}")`; }
+});
+
+// Set by applyHaTheme besides HA_TOKENS; cleared when the theme is switched off.
+const HA_EXTRA = ["--surface", "--page-image"];
 
 function applyHaTheme(root) {
   const cs = root.ownerDocument.defaultView.getComputedStyle(root);
+  const read = (...names) => names.map((n) => cs.getPropertyValue(n).trim()).find(Boolean) || "";
   const de = document.documentElement;
   for (const [mine, theirs] of Object.entries(HA_TOKENS)) {
-    const v = theirs.map((n) => cs.getPropertyValue(n).trim()).find(Boolean);
+    const v = read(...theirs);
     if (v) de.style.setProperty(mine, v); else de.style.removeProperty(mine);
   }
-  const dark = isDarkColour(cs.getPropertyValue("--primary-background-color").trim()) ?? /dark/.test(cs.colorScheme || "");
+  const base = rgba(read("--primary-background-color"));
+  const dark = base ? luminance(base) < 0.18 : /dark/.test(cs.colorScheme || "");
   de.dataset.theme = dark ? "dark" : "light";
   de.dataset.ha = "";
+
+  // An always-opaque surface for labels on photos: the theme's card colour if it's solid, else the page colour.
+  const solid = [read("--card-background-color"), read("--ha-card-background")].find((v) => (rgba(v)?.[3] ?? 0) >= 0.95);
+  if (solid) de.style.setProperty("--surface", solid);
+  else if (base) de.style.setProperty("--surface", "var(--rail)");
+
+  // Glass themes: see-through cards and/or a background picture on the dashboard.
+  const card = rgba(read("--ha-card-background", "--card-background-color"));
+  let image = read("--lovelace-background", "--background-image");
+  if (/^(none|initial|unset|transparent)$/i.test(image)) image = "";
+  if (image) de.style.setProperty("--page-image", absoluteUrls(image, root.ownerDocument.baseURI));
+  else de.style.removeProperty("--page-image");
+  const glass = !!image || (card ? card[3] < 0.95 : false);
+  if (glass) de.dataset.glass = ""; else delete de.dataset.glass;
+
+  const primary = rgba(read("--primary-color"));
+  if (primary) {
+    const ink = inkOn(primary, read("--text-primary-color"), base);
+    if (ink) de.style.setProperty("--indigo-ink", ink);
+  }
 }
 
 // HA's font (Roboto) is loaded by the HA page; copy its @font-face rules so the frame can use it too.
@@ -116,9 +185,7 @@ function borrowFonts(doc) {
     const base = sheet.href || doc.baseURI;
     for (const r of rules) {
       if (r.type !== 5) continue; // CSSRule.FONT_FACE_RULE
-      css.push(r.cssText.replace(/url\((['"]?)([^'")]+)\1\)/g, (_, q, u) => {
-        try { return `url("${new URL(u, base).href}")`; } catch { return `url("${u}")`; }
-      }));
+      css.push(absoluteUrls(r.cssText, base));
     }
   }
   if (!css.length) return;
@@ -151,8 +218,9 @@ function watchHaTheme(root) {
 function applyTheme() {
   const pref = appearance();
   const de = document.documentElement;
-  for (const k of Object.keys(HA_TOKENS)) de.style.removeProperty(k);
+  for (const k of [...Object.keys(HA_TOKENS), ...HA_EXTRA]) de.style.removeProperty(k);
   delete de.dataset.ha;
+  delete de.dataset.glass;
   const root = pref === "ha" ? haRoot() : null;
   if (root) {
     applyHaTheme(root);

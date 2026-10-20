@@ -1,4 +1,16 @@
 # Changelog
+## 0.2.1
+
+- Glass themes such as Frosted Glass now carry over: the theme's background
+  picture shows behind the app, and cards are frosted glass with the theme's
+  edges and shadows. Cards get a light tint so garment names stay readable over
+  bright parts of the picture.
+- The top bar, bottom menu and garment sheets keep a strong frosted tint, so
+  they stay readable over photos. The bottom menu was see-through in 0.2.0.
+- Text on the theme's main colour (Wore it today, Add, selected chips) now
+  picks dark or light for contrast instead of the theme's text colour.
+- A garment sheet's title bar no longer scrolls over its content.
+- No database migration.
 ## 0.2.0
 
 - Follows your Home Assistant theme: colours, dark mode, card corners and font

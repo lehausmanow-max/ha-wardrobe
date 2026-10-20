@@ -17,6 +17,20 @@
   --sel-bg: var(--ink);
   --sel-ink: var(--rail);
   --active: var(--selvedge);
+  /* Surfaces. --tag is the card surface and may be see-through (glass themes); --surface is always
+     opaque, for labels on photos; --control is buttons, chips and segments. */
+  --surface: var(--tag);
+  --control: var(--tag);
+  --card-border: var(--line);
+  --card-border-w: 1px;
+  --card-shadow: none;
+  --card-filter: none;
+  --bar-top: var(--rail);
+  --bar-bottom: var(--tag);
+  --bar-filter: none;
+  --sheet-bg: var(--rail);
+  --sheet-filter: none;
+  --scrim: rgba(10, 12, 16, .45);
   --shadow: 0 1px 0 rgba(28, 33, 40, .06), 0 8px 24px -12px rgba(28, 33, 40, .25);
   --label: "Avenir Next Condensed", "Roboto Condensed", "Arial Narrow", sans-serif-condensed, system-ui, sans-serif;
   --body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
@@ -57,25 +71,27 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 /* ------------------------------------------------ top bar and profile switch */
 .topbar {
   position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 8px;
-  padding: 10px var(--gutter); background: var(--rail);
+  padding: 10px var(--gutter); background: var(--bar-top);
+  -webkit-backdrop-filter: var(--bar-filter); backdrop-filter: var(--bar-filter);
   border-bottom: 1px solid var(--line);
 }
 .profiles { display: flex; gap: 6px; flex: 1; overflow-x: auto; scrollbar-width: none; }
 .profile-pill {
-  display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--tag);
+  display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--control);
   border-radius: 999px; padding: 4px 12px 4px 4px; cursor: pointer; white-space: nowrap;
 }
 .profile-pill .dot { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
   color: #fff; font: 600 13px/1 var(--label); }
 .profile-pill[aria-selected="true"] { border-color: var(--ink); font-weight: 600; }
 .icon-btn { border: 0; background: none; padding: 8px; border-radius: 8px; cursor: pointer; color: var(--muted); }
-.icon-btn:hover { color: var(--ink); background: var(--tag); }
+.icon-btn:hover { color: var(--ink); background: var(--control); }
 
 /* ------------------------------------------------ bottom tabs */
 .tabs {
   position: fixed; inset: auto 0 0 0; z-index: 20; display: grid; grid-template-columns: repeat(5, 1fr);
   height: calc(var(--nav-h) + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
-  background: var(--tag); border-top: 1px solid var(--line);
+  background: var(--bar-bottom); border-top: 1px solid var(--line);
+  -webkit-backdrop-filter: var(--bar-filter); backdrop-filter: var(--bar-filter);
 }
 .tabs a {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
@@ -101,7 +117,7 @@ h3 { font-size: 17px; }
 /* ------------------------------------------------ controls */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px;
-  padding: 0 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--tag);
+  padding: 0 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--control);
   cursor: pointer; font-weight: 500; text-decoration: none; color: var(--ink);
 }
 .btn svg { width: 18px; height: 18px; }
@@ -123,14 +139,14 @@ label.field > span { display: block; font-size: 13px; color: var(--muted); margi
 
 .chips { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 6px; scrollbar-width: none; margin: 0 calc(-1 * var(--gutter)); padding-inline: var(--gutter); }
 .chip {
-  flex: none; border: 1px solid var(--line); background: var(--tag); border-radius: 999px;
+  flex: none; border: 1px solid var(--line); background: var(--control); border-radius: 999px;
   padding: 6px 12px; cursor: pointer; white-space: nowrap; font-size: 14px;
 }
 .chip[aria-pressed="true"] { background: var(--sel-bg); color: var(--sel-ink); border-color: var(--sel-bg); }
 .chip .count { color: var(--muted); margin-left: 4px; font-variant-numeric: tabular-nums; }
 .chip[aria-pressed="true"] .count { color: inherit; opacity: .7; }
 
-.seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--tag); }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--control); }
 .seg button { flex: 1; border: 0; background: none; padding: 8px 4px; cursor: pointer; font-size: 13px; }
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button[aria-pressed="true"] { background: var(--sel-bg); color: var(--sel-ink); }
@@ -139,7 +155,7 @@ label.field > span { display: block; font-size: 13px; color: var(--muted); margi
 .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
 .dots i.on { background: var(--ink); }
 .dotpick { display: flex; gap: 6px; }
-.dotpick button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--tag); cursor: pointer; font-variant-numeric: tabular-nums; }
+.dotpick button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--control); cursor: pointer; font-variant-numeric: tabular-nums; }
 .dotpick button[aria-pressed="true"] { background: var(--sel-bg); color: var(--sel-ink); border-color: var(--sel-bg); }
 
 .swatch { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0,0,0,.15); display: inline-block; vertical-align: middle; }
@@ -180,18 +196,23 @@ label.field > span { display: block; font-size: 13px; color: var(--muted); margi
 .tag .meta { font-size: 12.5px; color: var(--muted); margin-top: 3px; display: flex; justify-content: space-between; gap: 6px; align-items: center; }
 .tag .flag {
   position: absolute; top: 24px; right: 8px; font-size: 11.5px; font-weight: 600; padding: 2px 8px;
-  border-radius: 999px; background: var(--tag); color: var(--ink); box-shadow: var(--shadow);
+  border-radius: 999px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow);
 }
 .tag .flag.due { color: var(--selvedge); }
 .tag.dim .pic img { opacity: .55; filter: grayscale(.4); }
 
-.empty { text-align: left; padding: 24px; background: var(--tag); border: 1px dashed var(--line); border-radius: var(--r); }
+.empty { text-align: left; padding: 24px; background: var(--tag); border: var(--card-border-w) dashed var(--card-border); border-radius: var(--r);
+  box-shadow: var(--card-shadow); -webkit-backdrop-filter: var(--card-filter); backdrop-filter: var(--card-filter); }
 .empty h3 { margin-bottom: 4px; }
 
 /* ------------------------------------------------ panels and lists */
-.panel { background: var(--tag); border-radius: var(--r); padding: 14px; border: 1px solid var(--line); }
+.panel, .list, .look {
+  background: var(--tag); border: var(--card-border-w) solid var(--card-border); border-radius: var(--r);
+  box-shadow: var(--card-shadow); -webkit-backdrop-filter: var(--card-filter); backdrop-filter: var(--card-filter);
+}
+.panel { padding: 14px; }
 .panel + .panel { margin-top: 12px; }
-.list { list-style: none; margin: 0; padding: 0; background: var(--tag); border: 1px solid var(--line); border-radius: var(--r); }
+.list { list-style: none; margin: 0; padding: 0; }
 .list > li { padding: 12px 14px; display: flex; gap: 12px; align-items: center; }
 .list > li + li { border-top: 1px solid var(--line); }
 .list .thumb { width: 44px; height: 54px; border-radius: 6px; object-fit: cover; flex: none; background: var(--rail); }
@@ -214,7 +235,7 @@ button.linkish { all: unset; cursor: pointer; display: flex; gap: 12px; align-it
 .context { display: grid; gap: 10px; }
 .temp { display: flex; gap: 8px; align-items: center; }
 .temp input { width: 92px; }
-.look { background: var(--tag); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; }
+.look { padding: 12px; }
 .look + .look { margin-top: 12px; }
 .look .strip { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 10px 0; }
 .look .strip figure { margin: 0; flex: 1 1 0; min-width: 58px; max-width: 110px; }
@@ -245,11 +266,12 @@ button.linkish { all: unset; cursor: pointer; display: flex; gap: 12px; align-it
 .area-grid .area { display: grid; grid-template-columns: 82px 1fr; gap: 8px; align-items: center; font-size: 14px; }
 
 /* ------------------------------------------------ sheets */
-.sheet-backdrop { position: fixed; inset: 0; background: rgba(10, 12, 16, .45); z-index: 40; }
+.sheet-backdrop { position: fixed; inset: 0; background: var(--scrim); z-index: 40; }
 .sheet {
-  position: fixed; z-index: 41; left: 0; right: 0; bottom: 0; max-height: 94vh; overflow-y: auto;
-  background: var(--rail); border-radius: 16px 16px 0 0; box-shadow: var(--shadow);
-  padding: 0 var(--gutter) calc(24px + env(safe-area-inset-bottom));
+  position: fixed; z-index: 41; left: 0; right: 0; bottom: 0; max-height: 94vh;
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--sheet-bg); border-radius: 16px 16px 0 0; box-shadow: var(--shadow);
+  -webkit-backdrop-filter: var(--sheet-filter); backdrop-filter: var(--sheet-filter);
   animation: up .2s ease-out;
 }
 @media (min-width: 760px) {
@@ -258,21 +280,25 @@ button.linkish { all: unset; cursor: pointer; display: flex; gap: 12px; align-it
 @keyframes up { from { transform: translateY(24px); opacity: .6; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .sheet { animation: none; } .tag { transition: none; } }
 .sheet-head {
-  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 12px 0 10px;
-  background: var(--rail); border-bottom: 1px solid var(--line); margin-bottom: 14px;
+  flex: none; display: flex; align-items: center; gap: 8px; padding: 12px var(--gutter) 10px;
+  border-bottom: 1px solid var(--line);
+}
+.sheet-body {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  padding: 14px var(--gutter) calc(24px + env(safe-area-inset-bottom));
 }
 .sheet-head h2 { margin: 0; flex: 1; font-size: 20px; }
 .head-extra { display: contents; }
 .gallery { display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x mandatory; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); scrollbar-width: none; }
 .gallery figure { margin: 0; flex: none; width: min(78%, 320px); scroll-snap-align: start; position: relative; }
-.gallery img { width: 100%; aspect-ratio: 4 / 5; object-fit: cover; border-radius: var(--r); background: var(--tag); }
-.gallery figcaption { position: absolute; left: 8px; bottom: 8px; font-size: 12px; background: var(--tag); padding: 2px 8px; border-radius: 999px; }
-.gallery .add-photo { width: 120px; aspect-ratio: 4 / 5; display: grid; place-items: center; border: 1px dashed var(--line); border-radius: var(--r); background: var(--tag); cursor: pointer; color: var(--muted); }
+.gallery img { width: 100%; aspect-ratio: 4 / 5; object-fit: cover; border-radius: var(--r); background: var(--surface); }
+.gallery figcaption { position: absolute; left: 8px; bottom: 8px; font-size: 12px; background: var(--surface); padding: 2px 8px; border-radius: 999px; }
+.gallery .add-photo { width: 120px; aspect-ratio: 4 / 5; display: grid; place-items: center; border: 1px dashed var(--line); border-radius: var(--r); background: var(--control); cursor: pointer; color: var(--muted); }
 .section-title { font: 600 15px/1.2 var(--label); margin: 22px 0 8px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
 
 .picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.picker button { position: relative; border: 2px solid transparent; padding: 0; border-radius: 8px; overflow: hidden; background: var(--tag); cursor: pointer; text-align: left; }
+.picker button { position: relative; border: 2px solid transparent; padding: 0; border-radius: 8px; overflow: hidden; background: var(--surface); cursor: pointer; text-align: left; }
 .picker button[aria-pressed="true"] { border-color: var(--indigo); }
 .picker img, .picker .none { width: 100%; aspect-ratio: 4 / 5; object-fit: cover; }
 .picker span { display: block; font-size: 12px; padding: 4px 6px; line-height: 1.2; }
@@ -302,7 +328,7 @@ label.chip { position: relative; }
 label.chip:has(input:checked) { background: var(--sel-bg); color: var(--sel-ink); border-color: var(--sel-bg); }
 label.chip:has(input:focus-visible), .dotpick label:has(input:focus-visible), .seg label:has(input:focus-visible) { outline: 2px solid var(--indigo); outline-offset: 2px; }
 .chips.wrap { flex-wrap: wrap; overflow: visible; margin: 0; padding: 0; }
-.dotpick label { position: relative; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--tag); cursor: pointer; display: grid; place-items: center; font-variant-numeric: tabular-nums; }
+.dotpick label { position: relative; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--control); cursor: pointer; display: grid; place-items: center; font-variant-numeric: tabular-nums; }
 .dotpick label:has(input:checked) { background: var(--sel-bg); color: var(--sel-ink); border-color: var(--sel-bg); }
 .seg label { position: relative; flex: 1; text-align: center; padding: 8px 4px; cursor: pointer; font-size: 13px; }
 .seg label + label { border-left: 1px solid var(--line); }
@@ -312,7 +338,9 @@ legend { font-size: 13px; color: var(--muted); margin-bottom: 6px; padding: 0; }
 .form-grid { display: grid; gap: 14px; }
 .owner { width: 18px; height: 18px; border-radius: 50%; display: inline-grid; place-items: center; color: #fff; font: 600 10px/1 var(--label); flex: none; }
 
-.panel .list { border: 0; border-radius: 0; background: transparent; }
+.panel .list { border: 0; border-radius: 0; background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+/* No glass inside a sheet: the sheet is already the glass layer. */
+.sheet .panel, .sheet .list, .sheet .look, .sheet .empty { box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
 .panel .list > li { padding: 10px 0; }
 
 /* ------------------------------------------------ favourite star */
@@ -322,7 +350,7 @@ legend { font-size: 13px; color: var(--muted); margin-bottom: 6px; padding: 0; }
 .fav[aria-pressed="true"] svg, .fav-toggle:has(input:checked) svg { fill: currentColor; }
 .name-row { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: end; }
 .fav-toggle { position: relative; width: 42px; height: 42px; display: grid; place-items: center; border-radius: 8px; cursor: pointer; color: var(--muted); }
-.fav-toggle:hover { background: var(--tag); }
+.fav-toggle:hover { background: var(--control); }
 .fav-toggle input { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
 .fav-toggle:has(input:focus-visible) { outline: 2px solid var(--indigo); outline-offset: 2px; }
 
@@ -337,11 +365,45 @@ legend { font-size: 13px; color: var(--muted); margin-bottom: 6px; padding: 0; }
   --active: var(--indigo);
 }
 :root[data-ha] h1, :root[data-ha] h2, :root[data-ha] h3, :root[data-ha] .section-title { font-weight: 500; letter-spacing: 0; }
-:root[data-ha] .tag { clip-path: none; border-radius: var(--r); border: 1px solid var(--line); overflow: hidden; }
+:root[data-ha] .tag {
+  clip-path: none; border-radius: var(--r); overflow: hidden;
+  border: var(--card-border-w) solid var(--card-border); box-shadow: var(--card-shadow);
+  -webkit-backdrop-filter: var(--card-filter); backdrop-filter: var(--card-filter);
+}
 :root[data-ha] .tag .hole { display: none; }
-:root[data-ha] .tag .info { border-top: 1px solid var(--line); }
+:root[data-ha] .tag .info { border-top: var(--card-border-w) solid var(--card-border); }
 :root[data-ha] .tag .flag { top: 8px; }
 :root[data-ha] .tag .name { font-size: 15px; font-weight: 500; }
 :root[data-ha] .panel, :root[data-ha] .list, :root[data-ha] .look, :root[data-ha] .empty { border-radius: var(--r); }
 /* HA's warning colour is an icon amber; darken or lighten it for text. */
 :root[data-ha] .reasons li.warn, :root[data-ha] .band-snug, :root[data-ha] .band-roomy { color: color-mix(in srgb, var(--warn) 70%, var(--ink)); }
+
+/* ------------------------------------------------ glass themes (e.g. Frosted Glass)
+   The theme's cards are see-through and its dashboard has a background picture. Cards here do the
+   same. Bars, sheets and labels that sit on top of photos keep a strong tint so text stays readable. */
+:root[data-glass] {
+  --bar-top: color-mix(in srgb, var(--rail) 90%, transparent);
+  --bar-bottom: color-mix(in srgb, var(--rail) 90%, transparent);
+  --bar-filter: blur(20px) saturate(1.3);
+  --sheet-bg: color-mix(in srgb, var(--rail) 76%, transparent);
+  --sheet-filter: blur(24px) saturate(1.2);
+  --control: var(--field);
+  /* The theme's card glass plus a light tint of the page colour, so names stay readable
+     over bright parts of the background picture. */
+  --glass-card: color-mix(in srgb, var(--rail) 24%, var(--tag));
+}
+:root[data-glass] .panel, :root[data-glass] .list, :root[data-glass] .look, :root[data-glass] .empty,
+:root[data-glass] .tag .info { background: var(--glass-card); }
+:root[data-glass] .tag { background: transparent; }
+:root[data-glass] .panel .list { background: transparent; }
+:root[data-glass] body::before {
+  content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background: var(--page-image, none);
+}
+/* The photo covers most of a garment card, so only the name strip needs the blur: much cheaper to scroll. */
+:root[data-glass] .tag { -webkit-backdrop-filter: none; backdrop-filter: none; }
+:root[data-glass] .tag .info { -webkit-backdrop-filter: var(--card-filter); backdrop-filter: var(--card-filter); }
+:root[data-glass] .tag .flag, :root[data-glass] .gallery figcaption {
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
