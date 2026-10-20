@@ -1,0 +1,4 @@
+# Versions the app was tested with. Pillow comes from Alpine (py3-pillow).
+starlette==1.6.0
+uvicorn==0.53.0
+python-multipart==0.0.32

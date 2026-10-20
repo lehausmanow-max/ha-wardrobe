@@ -1,0 +1,36 @@
+configuration:
+  ai_text_provider:
+    name: AI for styling and shopping advice
+    description: >-
+      Picks between suggested looks and writes shopping advice. Only text is
+      sent (garment names, colours, categories), never photos. "none" keeps
+      the built-in rules only.
+  ai_vision_provider:
+    name: AI for reading photos
+    description: >-
+      Auto-fills new garments from a photo, reads care labels and checks fit
+      from a photo of you wearing it. "ollama" keeps photos on your network;
+      "claude" sends a downscaled copy to Anthropic's API.
+  ollama_url:
+    name: Ollama address
+    description: Where your Ollama server runs, e.g. http://192.168.1.20:11434
+  ollama_text_model:
+    name: Ollama text model
+    description: Any chat model you have pulled, e.g. qwen2.5:7b or llama3.1:8b
+  ollama_vision_model:
+    name: Ollama vision model
+    description: A model that accepts images, e.g. qwen2.5vl:7b, llama3.2-vision or gemma3
+  claude_api_key:
+    name: Claude API key
+    description: From console.anthropic.com. Only needed when a provider above is set to claude.
+  claude_model:
+    name: Claude model
+    description: Model ID, e.g. claude-sonnet-5-5 or claude-haiku-5-5 (cheaper)
+  weather_entity:
+    name: Weather entity
+    description: >-
+      Optional. A weather entity such as weather.forecast_home; the Looks tab
+      then fills in today's temperature.
+  log_level:
+    name: Log level
+    description: How much the app writes to its log
