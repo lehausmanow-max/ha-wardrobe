@@ -36,8 +36,8 @@ ha-wardrobe/
 **Option A, local app (quickest):**
 
 1. Install the **Samba share** or **Terminal & SSH** app.
-2. Copy the `wardrobe` folder into the `local_apps` share, so you have
-   `local_apps/wardrobe/config.yaml`. Keep `run.sh` with Unix line endings.
+2. Copy the `wardrobe` folder into the `addons` share, so you have
+   `addons/wardrobe/config.yaml`. Keep `run.sh` with Unix line endings.
 3. **Settings, Apps, Install app**, then **Check for updates** in the top-right
    menu. Open **Local apps**, select **Wardrobe**, **Install**.
 4. Set options on the **Configuration** tab if you want AI or weather, then
