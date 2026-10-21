@@ -1,6 +1,7 @@
 # Home Assistant base image (Alpine, S6 overlay, bashio), multi-arch.
-# Pin a dated tag here once it builds for you, e.g. ghcr.io/home-assistant/base:3.23-2026.05.0
-FROM ghcr.io/home-assistant/base:latest
+# Pinned, so an update of the base image never lands unannounced. Alpine 3.24 ships Python 3.14:
+# when changing this, update PYTHON_VERSION in .github/workflows/check.yml to match.
+FROM ghcr.io/home-assistant/base:3.24-2026.08.0
 
 ARG BUILD_VERSION=0.1.0
 

@@ -1,5 +1,5 @@
 name: Wardrobe
-version: "0.2.1"
+version: "0.3.0"
 slug: wardrobe
 description: >-
   A shared wardrobe for your household: garments with photos, outfit
@@ -20,6 +20,8 @@ panel_admin: false
 # Reads a weather entity to dress for the temperature.
 homeassistant_api: true
 backup: hot
+# Restart the app when it stops accepting connections. TCP, because the app answers HTTP only to Ingress.
+watchdog: tcp://[HOST]:[PORT:8099]
 options:
   ai_text_provider: none
   ai_vision_provider: none

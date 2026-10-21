@@ -13,18 +13,33 @@ their own garments, measurements and fit notes; laundry is shared.
 
 ## Adding garments
 
-Tap **Add** and take or pick a photo. Best results: garment laid flat or on a
-hanger, plain light background, daylight, one garment per photo.
+Tap **Add**, then add photos with **Camera** (one per tap) or **Gallery**
+(several at once): the garment laid flat or on a hanger against a plain light
+background, its care label and its brand or size tag, close up and in daylight.
+Each photo uploads as soon as it's taken.
 
-- Colours are always read from the photo on your own machine.
-- With a photo AI switched on, name, category, fabric, formality, warmth,
-  seasons and occasions are filled in too. You check and save.
-- Care defaults come from the fabric (wool gets a wool programme, flat drying,
-  and so on). Snap the care label with **Read care label** to replace them with
-  what the label says.
+- With a photo AI switched on, **Read photos** reads all of them in one go and
+  fills in name, category, colours, fabric with percentages, brand, size and
+  care. What came from a label or tag is marked; check and save once.
+- A label or tag beats the photo: the fibre composition on the care label
+  replaces a fabric guessed from the look, and the brand on the tag replaces a
+  logo. Bleach is only ever taken from a care label.
+- Without AI, **Continue** opens the form with colours read from the photo;
+  care defaults come from the fabric you fill in.
+- Tap the label under a photo to change what it shows (Garment, Main photo,
+  Care label, Tag).
+- An unsaved garment is kept as a draft for a day. **Add** offers to continue
+  it, for example when the phone closed the browser while the camera was open.
+
+For a garment you already have: **Camera** or **Gallery** on its page adds
+photos, and **Re-read photos** reads them again. Changes are shown for you to
+tick; values from a label or tag are ticked, what you typed yourself isn't.
 
 Photos are resized to 2048 px on the phone before upload, and saved again on the
 server without metadata, so GPS positions never end up in the wardrobe.
+
+Purchase price and date aren't asked for any more. Values entered in earlier
+versions are kept and stay in the JSON export.
 
 ## What each tab does
 
@@ -48,13 +63,13 @@ colour group, and garments due a wash based on wears since the last one.
 
 **Shop** — what to buy next, ranked by how many new good outfits each piece
 would add to what you own; gaps (rain jacket, winter coat, smart layer, smart
-shoes); pieces nothing goes with; cost per wear; a wishlist.
+shoes); pieces nothing goes with; pieces not worn in three months; a wishlist.
 
 ## Configuration
 
 | Option | What it does |
 | --- | --- |
-| `ai_vision_provider` | `none`, `ollama` or `claude`. Reads photos: new garments, care labels, fit photos. |
+| `ai_vision_provider` | `none`, `ollama` or `claude`. Reads photos: garments with their labels and tags, fit photos. |
 | `ai_text_provider` | `none`, `ollama` or `claude`. Picks between suggested looks and writes shopping advice. Sends text only. |
 | `ollama_url` | Your Ollama server, e.g. `http://192.168.1.20:11434`. |
 | `ollama_vision_model` | A model that reads images: `qwen2.5vl:7b`, `llama3.2-vision`, `gemma3`. |
@@ -72,10 +87,13 @@ rules.
 
 - **Photos stay home:** `ollama` for vision. A vision model needs a machine with
   a decent GPU (or Apple silicon); a Raspberry Pi or Home Assistant Green is too
-  slow. First requests after a model loads can take a minute.
-- **No GPU:** `claude` for vision sends a 1024 px copy of the photo to
-  Anthropic's API, nothing else about you. Text can still go to a small local
-  model.
+  slow. First requests after a model loads can take a minute. Small local
+  models read one photo at a time: the main photo for the garment, and each
+  photo marked Care label for the care. Mark the label photos before reading.
+- **No GPU:** `claude` for vision sends copies of the garment's photos to
+  Anthropic's API (up to six, 1568 px, so label text stays readable), nothing
+  else about you. Photos of you wearing something are only sent for a fit
+  check. Text can still go to a small local model.
 - The text provider only ever receives garment names, categories, colour names,
   formality and your style notes.
 

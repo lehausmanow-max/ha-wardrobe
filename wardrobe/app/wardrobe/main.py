@@ -14,7 +14,7 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Respon
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import ai, care, colors, config, db, fit, ha, images, matching, shopping, taxonomy
+from . import ai, care, colors, config, db, fit, ha, images, intake, matching, shopping, taxonomy
 
 log = logging.getLogger("wardrobe")
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -97,18 +97,7 @@ def clean_garment(data: dict, partial: bool) -> dict:
     if "fit_type" in data:
         out["fit_type"] = data["fit_type"] if data["fit_type"] in taxonomy.FIT_TYPES else "regular"
     if "care" in data and isinstance(data["care"], dict):
-        c = {}
-        for k, allowed in taxonomy.CARE_FIELDS.items():
-            v = data["care"].get(k)
-            if k == "temp":
-                v = _clamp_int(v, 0, 95, None) if v not in (None, "") else None
-            elif v not in allowed:
-                v = None
-            if v is not None:
-                c[k] = v
-        c["notes"] = str(data["care"].get("notes") or "")[:300]
-        c["wash_after"] = _clamp_int(data["care"].get("wash_after"), 0, 50, 0)
-        out["care"] = c
+        out["care"] = clean_care(data["care"])
     if "measurements" in data and isinstance(data["measurements"], dict):
         out["measurements"] = {k: f for k, v in data["measurements"].items()
                                if (f := _float_or_none(v)) is not None and f > 0}
@@ -125,6 +114,34 @@ def clean_garment(data: dict, partial: bool) -> dict:
         if "category" not in out:
             fail(400, "Choose a category")
     return out
+
+
+def clean_care(raw: dict) -> dict:
+    c = {}
+    for k, allowed in taxonomy.CARE_FIELDS.items():
+        v = raw.get(k)
+        if k == "temp":
+            v = _clamp_int(v, 0, 95, None) if v not in (None, "") else None
+        elif v not in allowed:
+            v = None
+        if v is not None:
+            c[k] = v
+    c["notes"] = str(raw.get("notes") or "")[:300]
+    c["wash_after"] = _clamp_int(raw.get("wash_after"), 0, 50, 0)
+    return c
+
+
+def finish_care(raw: dict, from_label: bool, stored: dict) -> dict:
+    """Clean care for storing. Bleach is kept only when it was read from a care label: from this
+    read (from_label), or from an earlier one already in the stored care."""
+    c = clean_care(raw)
+    if not from_label:
+        return care.label_bleach(c, stored)
+    if c.get("bleach"):
+        c["bleach_from_label"] = True
+    else:
+        c.pop("bleach", None)
+    return c
 
 
 def _wear_stats(conn, ids: list[int]) -> dict[int, dict]:
@@ -194,8 +211,9 @@ def get_profile(conn, pid: int) -> dict:
 
 
 def list_garments(conn, profile_id: int, statuses=None) -> list[dict]:
-    q = "SELECT * FROM garments WHERE profile_id = ?"
-    args: list = [profile_id]
+    """A profile's garments, drafts left out."""
+    q = "SELECT * FROM garments WHERE profile_id = ? AND status != ?"
+    args: list = [profile_id, taxonomy.DRAFT]
     if statuses:
         q += f" AND status IN ({','.join('?' * len(statuses))})"
         args += list(statuses)
@@ -230,6 +248,26 @@ async def read_upload(request: Request, field: str = "file"):
     upload = form.get(field)
     data = await upload.read() if upload is not None and hasattr(upload, "read") else None
     return form, data
+
+
+def fix_primary(conn, garment_id: int) -> None:
+    """Exactly one garment photo is the main photo, as long as the garment has one."""
+    rows = conn.execute("SELECT id, kind, is_primary FROM photos WHERE garment_id = ? ORDER BY id",
+                        (garment_id,)).fetchall()
+    items = [r for r in rows if r["kind"] == "item"]
+    main = next((r["id"] for r in items if r["is_primary"]), items[0]["id"] if items else None)
+    conn.execute("UPDATE photos SET is_primary = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE garment_id = ?",
+                 (main, garment_id))
+
+
+def purge_drafts(conn) -> None:
+    """Drafts are kept for a day, so an interrupted intake can be continued; then they go."""
+    old = [r[0] for r in conn.execute(
+        "SELECT id FROM garments WHERE status = ? AND created_at < datetime('now', '-1 day')", (taxonomy.DRAFT,))]
+    for gid in old:
+        for (fn,) in conn.execute("SELECT filename FROM photos WHERE garment_id = ?", (gid,)).fetchall():
+            images.delete_files(fn)
+        conn.execute("DELETE FROM garments WHERE id = ?", (gid,))
 
 
 async def store_photo(conn, garment_id: int, data: bytes, kind: str = "item") -> tuple[dict, object]:
@@ -343,11 +381,19 @@ async def api_garments(request: Request):
             q += " AND category = ?"
             args.append(cat)
         status = request.query_params.get("status")
-        if status == "current":
-            q += " AND status NOT IN ('archived', 'stored')"
+        if status == taxonomy.DRAFT:
+            # Drafts to continue: only the last day's, older ones are deleted at the next intake.
+            q += " AND status = ? AND created_at >= datetime('now', '-1 day')"
+            args.append(taxonomy.DRAFT)
+        elif status == "current":
+            q += " AND status NOT IN ('archived', 'stored', ?)"
+            args.append(taxonomy.DRAFT)
         elif status:
             q += " AND status = ?"
             args.append(status)
+        else:
+            q += " AND status != ?"
+            args.append(taxonomy.DRAFT)
         search = (request.query_params.get("q") or "").strip()
         if search:
             q += " AND (name LIKE ? OR brand LIKE ? OR material LIKE ? OR subcategory LIKE ? OR notes LIKE ?)"
@@ -398,7 +444,7 @@ async def api_garment_photo(request: Request):
     form, data = await read_upload(request)
     if not data:
         fail(400, "Attach a photo")
-    kind = form.get("kind") if form.get("kind") in ("item", "label", "worn") else "item"
+    kind = form.get("kind") if form.get("kind") in taxonomy.PHOTO_KINDS else "item"
     with db.connect() as conn:
         g = get_garment(conn, gid)
         _, img = await store_photo(conn, gid, data, kind)
@@ -416,19 +462,20 @@ async def api_photo(request: Request):
         if request.method == "DELETE":
             images.delete_files(p["filename"])
             conn.execute("DELETE FROM photos WHERE id = ?", (pid,))
-            if p["is_primary"]:
-                nxt = conn.execute("SELECT id FROM photos WHERE garment_id = ? AND kind = 'item' ORDER BY id LIMIT 1",
-                                   (p["garment_id"],)).fetchone()
-                if nxt:
-                    conn.execute("UPDATE photos SET is_primary = 1 WHERE id = ?", (nxt[0],))
-        else:  # POST = make primary
+        elif request.method == "PATCH":  # change what the photo shows
+            kind = (await body(request)).get("kind")
+            if kind not in taxonomy.PHOTO_KINDS:
+                fail(400, "Unknown photo kind")
+            conn.execute("UPDATE photos SET kind = ? WHERE id = ?", (kind, pid))
+        else:  # POST = make it the main photo, which is always a photo of the garment itself
             conn.execute("UPDATE photos SET is_primary = 0 WHERE garment_id = ?", (p["garment_id"],))
-            conn.execute("UPDATE photos SET is_primary = 1 WHERE id = ?", (pid,))
+            conn.execute("UPDATE photos SET is_primary = 1, kind = 'item' WHERE id = ?", (pid,))
+        fix_primary(conn, p["garment_id"])
         return ok(get_garment(conn, p["garment_id"]))
 
 
 async def api_intake(request: Request):
-    """Snap a photo, get a pre-filled garment back. Local colours always; AI tags when enabled."""
+    """Start a draft garment from its first photo. Nothing is read yet: that waits until all photos are in."""
     form, data = await read_upload(request)
     if not data:
         fail(400, "Attach a photo")
@@ -436,59 +483,89 @@ async def api_intake(request: Request):
         profile_id = int(form.get("profile_id") or 0)
     except ValueError:
         fail(400, "profile_id must be a number")
+    kind = form.get("kind") if form.get("kind") in intake.READ_KINDS else "item"
     with db.connect() as conn:
         get_profile(conn, profile_id)
-        gid = db.insert(conn, "garments", {"profile_id": profile_id, "name": "New garment", "category": "top"})
-        _, img = await store_photo(conn, gid, data, "item")
-        vals = {"colors": images.dominant_colors(img)}
-        ai_info = {"used": False}
-        vision = provider("vision")
-        if vision:
-            photo = conn.execute("SELECT filename FROM photos WHERE garment_id = ?", (gid,)).fetchone()[0]
-            try:
-                tags = await run_in_threadpool(ai.tasks.tag_garment, vision, images.for_ai(photo))
-                ai_info = {"used": True, "provider": vision.name}
-                vals.update({k: v for k, v in tags.items() if v not in ("", [], None)})
-            except ai.AIError as exc:
-                ai_info = {"used": False, "error": str(exc)}
-        vals["care"] = care.defaults_for(vals.get("material", ""), vals.get("category", "top"))
-        db.update(conn, "garments", gid, clean_garment(vals, partial=True) | {"care": vals["care"]})
-        g = get_garment(conn, gid)
-        g["intake"] = ai_info
-        return ok(g, 201)
+        purge_drafts(conn)
+        gid = db.insert(conn, "garments", {"profile_id": profile_id, "name": "New garment", "category": "top",
+                                           "status": taxonomy.DRAFT, "care": care.defaults_for("", "top")})
+        _, img = await store_photo(conn, gid, data, kind)
+        if kind == "item":
+            db.update(conn, "garments", gid, {"colors": images.dominant_colors(img)})
+        return ok(get_garment(conn, gid), 201)
 
 
-async def api_care_label(request: Request):
+async def api_read(request: Request):
+    """Read all photos of a garment in one go. A draft is filled in; a saved garment gets proposals."""
     gid = request.path_params["id"]
-    _, data = await read_upload(request)
-    if not data:
-        fail(400, "Attach a photo of the care label")
+    data = await body(request) if await request.body() else {}
+    keep = set()
+    for i in data.get("keep") or []:
+        try:
+            keep.add(int(i))
+        except (TypeError, ValueError):
+            pass
     vision = provider("vision")
+    if not vision:
+        fail(400, "Turn on an AI vision provider in the app's configuration to read photos")
     with db.connect() as conn:
         g = get_garment(conn, gid)
-        photo, _ = await store_photo(conn, gid, data, "label")
-        if not vision:
-            return ok({"garment": get_garment(conn, gid), "read": None,
-                       "message": "Label photo saved. Turn on an AI vision provider to read it automatically."})
-        try:
-            result = await run_in_threadpool(ai.tasks.read_care_label, vision, images.for_ai(photo["filename"]))
-        except ai.AIError as exc:
-            fail(502, f"Couldn't read the label: {exc}")
-        new_care = {**(g.get("care") or {}), **result["care"]}
-        # The label decides bleach: a symbol read now replaces the old value, no symbol clears it.
-        new_care.pop("bleach_from_label", None)
-        if new_care.get("bleach"):
-            new_care["bleach_from_label"] = True
-        else:
-            new_care.pop("bleach", None)
-        if not new_care.get("wash_after"):
-            new_care["wash_after"] = care.defaults_for(result["composition"] or g.get("material", ""),
-                                                       g["category"])["wash_after"]
-        vals = {"care": new_care, "updated_at": db.now()}
-        if result["composition"] and not g.get("material"):
-            vals["material"] = result["composition"].lower()
+    if not intake.pick_photos(g["photos"]):
+        fail(400, "Add a photo of the garment or its label first")
+    try:
+        result = await run_in_threadpool(intake.read, vision, g["photos"], keep)
+    except ai.AIError as exc:
+        fail(502, f"Couldn't read the photos: {exc}")
+
+    with db.connect() as conn:
+        g = get_garment(conn, gid)
+        fresh = g["status"] == taxonomy.DRAFT
+        kinds = intake.kinds_after(g["photos"], result["roles"], keep)
+        for p in g["photos"]:
+            if kinds[p["id"]] != p["kind"]:
+                conn.execute("UPDATE photos SET kind = ? WHERE id = ?", (kinds[p["id"]], p["id"]))
+        if fresh and not any(p["is_primary"] and p["id"] in keep for p in g["photos"]):
+            front = next((pid for pid, role in result["roles"].items()
+                          if role == "front" and kinds.get(pid) == "item"), None)
+            if front:
+                conn.execute("UPDATE photos SET is_primary = CASE WHEN id = ? THEN 1 ELSE 0 END "
+                             "WHERE garment_id = ?", (front, gid))
+        fix_primary(conn, gid)
+        g = get_garment(conn, gid)
+
+        local = None
+        if fresh and not result["garment"].get("colors") and g["photo"]:
+            local = await run_in_threadpool(images.colors_of, g["photo"])
+        merged = intake.merge(g, result, fresh, {p["kind"] for p in g["photos"]}, local)
+        info = {"provider": vision.name, "confidence": result["confidence"],
+                "sources": {k: src for k, (_, src) in merged.items()}}
+        if not fresh:
+            return ok({"garment": g, "read": info, "proposals": intake.proposals(g, merged)})
+        vals = clean_garment({k: v for k, (v, _) in merged.items() if k != "care"}, partial=True)
+        if "care" in merged:
+            new_care, src = merged["care"]
+            vals["care"] = finish_care(new_care, src == "label", g.get("care") or {})
+        vals["updated_at"] = db.now()
         db.update(conn, "garments", gid, vals)
-        return ok({"garment": get_garment(conn, gid), "read": result})
+        return ok({"garment": get_garment(conn, gid), "read": info})
+
+
+async def api_read_apply(request: Request):
+    """Apply the proposals the owner ticked after a re-read."""
+    gid = request.path_params["id"]
+    data = await body(request)
+    values = data.get("values")
+    values = {k: v for k, v in values.items() if k in intake.FIELD_ORDER} if isinstance(values, dict) else {}
+    if not values:
+        fail(400, "Nothing selected")
+    with db.connect() as conn:
+        g = get_garment(conn, gid)
+        vals = clean_garment({k: v for k, v in values.items() if k != "care"}, partial=True)
+        if isinstance(values.get("care"), dict):
+            vals["care"] = finish_care(values["care"], bool(data.get("care_from_label")), g.get("care") or {})
+        vals["updated_at"] = db.now()
+        db.update(conn, "garments", gid, vals)
+        return ok(get_garment(conn, gid))
 
 
 async def api_wear(request: Request):
@@ -839,9 +916,14 @@ async def api_wishlist_item(request: Request):
 
 
 async def api_export(request: Request):
+    # Drafts are unfinished garments: left out, with their photos.
+    queries = {t: f"SELECT * FROM {t}" for t in ("profiles", "looks", "look_items", "wears", "fit_logs", "wishlist")}
+    queries["garments"] = "SELECT * FROM garments WHERE status != :draft"
+    queries["photos"] = ("SELECT p.* FROM photos p JOIN garments g ON g.id = p.garment_id "
+                         "WHERE g.status != :draft ORDER BY p.id")
+    order = ("profiles", "garments", "photos", "looks", "look_items", "wears", "fit_logs", "wishlist")
     with db.connect() as conn:
-        dump = {t: [dict(r) for r in conn.execute(f"SELECT * FROM {t}")]
-                for t in ("profiles", "garments", "photos", "looks", "look_items", "wears", "fit_logs", "wishlist")}
+        dump = {t: [dict(r) for r in conn.execute(queries[t], {"draft": taxonomy.DRAFT})] for t in order}
     dump["version"] = config.VERSION
     return Response(json.dumps(dump, indent=1), media_type="application/json",
                     headers={"Content-Disposition": f"attachment; filename=wardrobe-{db.today()}.json"})
@@ -886,10 +968,11 @@ routes = [
     Route("/api/garments", api_garments, methods=["GET", "POST"]),
     Route("/api/garments/{id:int}", api_garment, methods=["GET", "PUT", "DELETE"]),
     Route("/api/garments/{id:int}/photos", api_garment_photo, methods=["POST"]),
-    Route("/api/garments/{id:int}/care-label", api_care_label, methods=["POST"]),
+    Route("/api/garments/{id:int}/read", api_read, methods=["POST"]),
+    Route("/api/garments/{id:int}/read/apply", api_read_apply, methods=["POST"]),
     Route("/api/garments/{id:int}/wear", api_wear, methods=["POST"]),
     Route("/api/garments/{id:int}/fit-log", api_fit_log, methods=["POST"]),
-    Route("/api/photos/{id:int}", api_photo, methods=["POST", "DELETE"]),
+    Route("/api/photos/{id:int}", api_photo, methods=["POST", "PATCH", "DELETE"]),
     Route("/api/intake", api_intake, methods=["POST"]),
     Route("/api/care/defaults", api_care_defaults),
     Route("/api/laundry", api_laundry),

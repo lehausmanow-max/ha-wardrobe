@@ -44,6 +44,12 @@ OCCASION_FORMALITY = {
 SEASONS = ["spring", "summer", "autumn", "winter"]
 
 STATUSES = ["active", "laundry", "repair", "stored", "archived"]
+# A garment being added that hasn't been saved yet. Set by the server only; never a choice in the
+# app, and left out of every list, suggestion and export.
+DRAFT = "draft"
+
+# item = the garment itself, label = care label, tag = brand or size tag, worn = someone wearing it.
+PHOTO_KINDS = ["item", "label", "tag", "worn"]
 
 FIT_TYPES = ["slim", "regular", "relaxed", "oversized"]
 

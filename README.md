@@ -17,10 +17,11 @@ ha-wardrobe/
 │   └── app/
 │       ├── wardrobe/        Python backend (Starlette + SQLite)
 │       │   ├── main.py      HTTP API
+│       │   ├── intake.py    reading all photos of a garment, label-first merge
 │       │   ├── matching.py  outfit engine
 │       │   ├── fit.py       ease-based fit and brand sizing
 │       │   ├── care.py      fabric care defaults, laundry sorter
-│       │   ├── shopping.py  next buys, gaps, cost per wear
+│       │   ├── shopping.py  next buys, gaps, underused pieces
 │       │   ├── colors.py    colour names, neutrals, harmony
 │       │   ├── images.py    resize, strip metadata, dominant colours
 │       │   ├── ha.py        Ingress user, weather entity
@@ -65,7 +66,9 @@ Needs Python 3.11+ with `starlette uvicorn python-multipart pillow`. Data goes t
 ## API
 
 JSON over HTTP under `/api/`; the UI uses nothing else. Main routes:
-`/api/garments`, `/api/intake` (photo in, pre-filled garment out),
+`/api/garments`, `/api/intake` (first photo in, draft garment out),
+`/api/garments/{id}/read` (all photos read at once: fills a draft, proposes
+changes for a saved garment),
 `/api/suggest`, `/api/looks`, `/api/fit/overview`, `/api/laundry`,
 `/api/shopping`, `/api/export`.
 

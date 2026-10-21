@@ -11,6 +11,8 @@ from . import colors, config
 MAX_SIDE = 2048
 THUMB_SIDE = 480
 AI_SIDE = 1024
+# Reading labels: fibre percentages are unreadable at AI_SIDE.
+READ_SIDE = 1568
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 
@@ -59,13 +61,19 @@ def delete_files(filename: str) -> None:
             pass
 
 
-def for_ai(filename: str) -> tuple[str, str]:
+def for_ai(filename: str, side: int = AI_SIDE) -> tuple[str, str]:
     """Return (media_type, base64) of a downscaled copy for vision models."""
     img = Image.open(config.MEDIA_DIR / filename).convert("RGB")
-    img.thumbnail((AI_SIDE, AI_SIDE))
+    img.thumbnail((side, side))
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=85)
     return "image/jpeg", base64.b64encode(buf.getvalue()).decode()
+
+
+def colors_of(filename: str) -> list[str]:
+    """dominant_colors of a stored photo."""
+    with Image.open(config.MEDIA_DIR / filename) as img:
+        return dominant_colors(img.convert("RGB"))
 
 
 def dominant_colors(img: Image.Image, count: int = 3) -> list[str]:

@@ -12,7 +12,6 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem("wardrobe." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem("wardrobe." + k, JSON.stringify(v)); } catch { /* storage blocked */ } },
 };
-const money = (n) => n == null ? "" : new Intl.NumberFormat(undefined, { style: "currency", currency: "EUR" }).format(n);
 const day = (iso) => iso ? new Date(iso + (iso.length === 10 ? "T12:00" : "")).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "";
 const thumb = (f) => f ? `thumbs/${f}` : "";
 const media = (f) => f ? `media/${f}` : "";
@@ -235,6 +234,8 @@ function applyTheme() {
 // ------------------------------------------------------------------ sheets
 const sheets = [];
 const ICON_X = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>`;
+const ICON_CAMERA = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>`;
+const ICON_GALLERY = `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 16 5-5 4 4 3-3 6 6"/><circle cx="15.5" cy="9.5" r="1.5"/></svg>`;
 const ICON_STAR = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.6 2.6 5.3 5.8.8-4.2 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.2-4.1 5.8-.8Z"/></svg>`;
 function openSheet(title, html) {
   const el = document.createElement("section");
@@ -251,11 +252,16 @@ function fillSheet(el, title, html, headExtra = "") {
   $(".sheet-head .head-extra", el).innerHTML = headExtra;
   $(".sheet-body", el).innerHTML = html;
 }
-function closeSheet() {
-  const el = sheets.pop();
-  if (el) { el.dispatchEvent(new Event("sheetclose")); el.remove(); }
+// A sheet with beforeClose() returning false stays open (the history entry is restored).
+// force skips that, for closing everything at once; listeners see it in ev.detail.force.
+function closeSheet(force = false) {
+  const el = sheets[sheets.length - 1];
+  if (el && !force && el.beforeClose && el.beforeClose() === false) { scheduleHistorySync(); return false; }
+  sheets.pop();
+  if (el) { el.dispatchEvent(new CustomEvent("sheetclose", { detail: { force } })); el.remove(); }
   if (!sheets.length) { $("#backdrop").hidden = true; document.body.style.overflow = ""; }
   scheduleHistorySync();
+  return true;
 }
 
 // Each open sheet has its own browser history entry, so a back swipe (or the Android back button)
@@ -279,10 +285,10 @@ function syncHistory() {
 window.addEventListener("popstate", () => {
   if (historyBusy) { historyBusy = false; clearTimeout(historyBusyTimer); scheduleHistorySync(); return; }
   const d = historyDepth();
-  while (sheets.length > d) closeSheet(); // back: close sheets, one per step
+  while (sheets.length > d) if (!closeSheet()) break; // back: close sheets, one per step
   scheduleHistorySync(); // forward onto a sheet that's gone: step back again
 });
-function closeAllSheets() { while (sheets.length) closeSheet(); }
+function closeAllSheets() { while (sheets.length) closeSheet(true); }
 function confirmSheet(title, text, yes = "Delete") {
   return new Promise((resolve) => {
     const el = openSheet(title, `<p>${esc(text)}</p><div class="actions"><button class="btn danger" data-yes>${esc(yes)}</button><button class="btn" data-no>Cancel</button></div>`);
@@ -454,7 +460,7 @@ function drawGrid() {
   const list = filteredGarments();
   if (!S.garments.length) {
     grid.innerHTML = `<div class="empty"><h3>Start with what you wear most</h3>
-      <p class="muted">Tap Add and take a photo of a garment on a plain background. The app reads its colours${S.meta.ai.vision.enabled ? " and fills in the details" : ""}; you check and save.</p>
+      <p class="muted">Tap Add and photograph a garment on a plain background${S.meta.ai.vision.enabled ? ", then its care label and brand tag. The app reads them all and fills in the details" : ". The app reads its colours"}; you check and save.</p>
       <button class="btn" data-action="new-garment">Add one without a photo</button></div>`;
     return;
   }
@@ -467,7 +473,8 @@ async function openGarment(id, existing) {
   const el = existing || openSheet("Garment", loading());
   const g = await api("GET", `api/garments/${id}`);
   const t = S.meta.taxonomy;
-  const photos = g.photos.map((p) => `<figure><img src="${media(p.filename)}" alt="">${p.kind !== "item" ? `<figcaption>${p.kind === "label" ? "Care label" : "Worn"}</figcaption>` : ""}</figure>`).join("");
+  const photos = g.photos.map((p) => `<figure><img src="${media(p.filename)}" alt="">${p.kind !== "item" ? `<figcaption>${PHOTO_CAPTION[p.kind] || human(p.kind)}</figcaption>` : ""}</figure>`).join("");
+  const readable = g.photos.some((p) => p.kind !== "worn");
   const statusSeg = [["active", "Wearing"], ["laundry", "In the wash"], ["repair", "Tailor"], ["stored", "Stored"]]
     .map(([v, l]) => `<label><input type="radio" name="status" value="${v}" ${g.status === v ? "checked" : ""} data-change="status" data-id="${g.id}">${l}</label>`).join("");
   const sinceWash = g.care?.wash_after ? `Wash after ${g.care.wash_after} wear${g.care.wash_after > 1 ? "s" : ""}; worn ${g.wears_since_wash} since the last wash.` : "";
@@ -483,7 +490,11 @@ async function openGarment(id, existing) {
       <button class="icon-btn" data-action="del-fitlog" data-id="${l.id}" data-g="${g.id}" aria-label="Delete note">${ICON_X}</button></li>`).join("");
 
   fillSheet(el, g.name, `
-    <div class="gallery">${photos}<button class="add-photo" data-action="add-photo" data-id="${g.id}" data-kind="item">Add photo</button></div>
+    ${photos ? `<div class="gallery">${photos}</div>` : ""}
+    <div class="row photo-row" role="group" aria-label="Photos">
+      <button class="btn ghost" data-action="add-photos" data-id="${g.id}" data-src="camera">${ICON_CAMERA}Camera</button>
+      <button class="btn ghost" data-action="add-photos" data-id="${g.id}" data-src="gallery">${ICON_GALLERY}Gallery</button>
+      ${S.meta.ai.vision.enabled && readable ? `<span class="grow"></span><button class="btn ghost" data-action="reread" data-id="${g.id}" data-busy="Reading">Re-read photos</button>` : ""}</div>
     <p class="muted" style="margin:12px 0 0">${[g.brand, g.size_label && `size ${g.size_label}`, cap(g.subcategory) || catLabel(g.category), g.material].filter(Boolean).map(esc).join(", ")}</p>
     <div class="row" style="margin-top:8px">${swatches(g.colors)}<span class="small">${esc((g.color_names || []).join(", "))}${g.pattern && g.pattern !== "solid" ? `, ${esc(g.pattern)}` : ""}</span></div>
     <dl class="kv small" style="margin-top:10px"><dt>Formality</dt><dd>${dots(g.formality)}</dd><dt>Warmth</dt><dd>${dots(g.warmth)}</dd>
@@ -497,9 +508,8 @@ async function openGarment(id, existing) {
     <div class="section-title">Where it is</div>
     <div class="seg" role="radiogroup" aria-label="Status">${statusSeg}</div>
     <div class="section-title">Wear</div>
-    <p class="small" style="margin:0">${g.wear_count ? `Worn ${g.wear_count} time${g.wear_count > 1 ? "s" : ""}, last on ${day(g.last_worn)}.` : "Not worn yet."}
-      ${g.cost_per_wear != null && g.wear_count ? ` ${money(g.cost_per_wear)} per wear (paid ${money(g.price)}).` : g.price ? ` Paid ${money(g.price)}.` : ""}</p>
-    <div class="section-title spread"><span>Care</span><button class="btn ghost" data-action="add-photo" data-id="${g.id}" data-kind="label">Read care label</button></div>
+    <p class="small" style="margin:0">${g.wear_count ? `Worn ${g.wear_count} time${g.wear_count > 1 ? "s" : ""}, last on ${day(g.last_worn)}.` : "Not worn yet."}</p>
+    <div class="section-title">Care</div>
     ${careIcons(g.care)}
     ${g.care?.notes ? `<p class="small">${esc(g.care.notes)}</p>` : ""}${sinceWash ? `<p class="small muted">${sinceWash}</p>` : ""}
     <div class="section-title">Fit</div>
@@ -521,8 +531,28 @@ async function refreshAfterChange() {
 }
 
 // ------------------------------------------------------------------ edit form
-function garmentForm(g, isNew) {
+// Where a value in the form came from, after reading the photos. The marker goes when the field is edited.
+const SOURCE_TEXT = { label: "from label", tag: "from tag", photo: "from photo", defaults: "fabric defaults" };
+const FORM_FIELD = { color: "colors", care_wash: "care", care_temp: "care", care_cycle: "care", care_dry: "care",
+  care_iron: "care", care_dry_clean: "care", care_wash_after: "care", care_notes: "care" };
+function unmark(form, field) { $$(`[data-src-for="${field}"]`, form).forEach((m) => m.remove()); }
+
+function intakeNote(g, opts) {
+  const r = opts.read;
+  if (r) {
+    const n = g.photos.filter((p) => p.kind !== "worn").length;
+    const low = r.confidence?.labels === "low" && ["material", "care"].some((k) => r.sources[k] === "label");
+    return `<div class="note small">Filled in from ${n} photo${n === 1 ? "" : "s"} by ${esc(cap(r.provider))}. Check the marked fields before saving.</div>`
+      + (low ? `<div class="note warn small">The labels were hard to read. Check the fabric and care against the label.</div>` : "");
+  }
+  if (opts.intakeSheet) return `<div class="note small">Colours were read from the photo. Fill in the rest; for care, set the fabric and use its defaults.</div>`;
+  return "";
+}
+
+function garmentForm(g, isNew, opts = {}) {
   const t = S.meta.taxonomy;
+  const sources = opts.read?.sources || {};
+  const mark = (field) => sources[field] ? ` <em class="src src-${esc(sources[field])}" data-src-for="${field}">${esc(SOURCE_TEXT[sources[field]] || sources[field])}</em>` : "";
   const cat = g.category || "top";
   const opt = (list, val, labels = {}) => list.map((v) => `<option value="${esc(v)}" ${String(v) === String(val ?? "") ? "selected" : ""}>${esc(labels[v] || human(v))}</option>`).join("");
   const radios = (name, list, val, labels = {}) => list.map((v) => `<label><input type="radio" name="${name}" value="${v}" ${String(v) === String(val) ? "checked" : ""}>${esc(labels[v] || human(v))}</label>`).join("");
@@ -532,37 +562,35 @@ function garmentForm(g, isNew) {
   const careSel = (k, labels) => `<label class="field"><span>${esc(labels.title)}</span><select name="care_${k}"><option value="">-</option>${opt(t.care_fields[k], c[k], labels)}</select></label>`;
   return `
   <form class="form-grid" id="gform" data-id="${g.id || ""}" data-new="${isNew ? 1 : 0}">
-    ${g.intake ? (g.intake.used ? `<div class="note small">Filled in from the photo by ${esc(g.intake.provider)}. Check it before saving.</div>`
-      : g.intake.error ? `<div class="note warn small">The AI couldn't read the photo (${esc(g.intake.error)}). Colours came from the photo; fill in the rest.</div>`
-      : `<div class="note small">Colours were read from the photo. Fill in the rest.</div>`) : ""}
+    ${intakeNote(g, opts)}
     <div class="name-row">
-      <label class="field"><span>Name</span><input type="text" name="name" required value="${esc(g.name === "New garment" ? "" : g.name)}" placeholder="Navy merino crewneck" autofocus></label>
+      <label class="field"><span>Name${mark("name")}</span><input type="text" name="name" required value="${esc(g.name === "New garment" ? "" : g.name)}" placeholder="Navy merino crewneck" autofocus></label>
       <label class="fav-toggle" title="Favourite"><input type="checkbox" name="favorite" aria-label="Favourite" ${g.favorite ? "checked" : ""}>${ICON_STAR}</label>
     </div>
     <div class="grid2">
-      <label class="field"><span>Category</span><select name="category">${opt(Object.keys(t.categories), cat, Object.fromEntries(Object.entries(t.categories).map(([k, v]) => [k, v.label])))}</select></label>
-      <label class="field"><span>Type</span><select name="subcategory"><option value="">-</option>${opt(t.categories[cat].sub, g.subcategory)}</select></label>
+      <label class="field"><span>Category${mark("category")}</span><select name="category">${opt(Object.keys(t.categories), cat, Object.fromEntries(Object.entries(t.categories).map(([k, v]) => [k, v.label])))}</select></label>
+      <label class="field"><span>Type${mark("subcategory")}</span><select name="subcategory"><option value="">-</option>${opt(t.categories[cat].sub, g.subcategory)}</select></label>
     </div>
     <div class="grid2">
-      <label class="field"><span>Brand</span><input type="text" name="brand" value="${esc(g.brand)}"></label>
-      <label class="field"><span>Size on label</span><input type="text" name="size_label" value="${esc(g.size_label)}" placeholder="M, 38, 32/32"></label>
+      <label class="field"><span>Brand${mark("brand")}</span><input type="text" name="brand" value="${esc(g.brand)}"></label>
+      <label class="field"><span>Size on label${mark("size_label")}</span><input type="text" name="size_label" value="${esc(g.size_label)}" placeholder="M, 38, 32/32"></label>
     </div>
     <fieldset><legend>Intended fit</legend><div class="seg">${radios("fit_type", t.fit_types, g.fit_type || "regular")}</div></fieldset>
-    <fieldset><legend>Colours, main colour first</legend><div class="colour-edit" id="colours">
+    <fieldset><legend>Colours, main colour first${mark("colors")}</legend><div class="colour-edit" id="colours">
       ${(g.colors?.length ? g.colors : ["#888888"]).map((hx) => `<label><input type="color" name="color" value="${esc(hx)}" aria-label="Colour"></label>`).join("")}
       <button type="button" class="btn ghost" data-action="add-colour">Add colour</button><button type="button" class="btn ghost" data-action="remove-colour">Remove last</button></div></fieldset>
     <div class="grid2">
-      <label class="field"><span>Pattern</span><select name="pattern">${opt(t.patterns, g.pattern || "solid")}</select></label>
-      <label class="field"><span>Fabric</span><input type="text" name="material" value="${esc(g.material)}" placeholder="80% wool, 20% nylon"></label>
+      <label class="field"><span>Pattern${mark("pattern")}</span><select name="pattern">${opt(t.patterns, g.pattern || "solid")}</select></label>
+      <label class="field"><span>Fabric${mark("material")}</span><input type="text" name="material" value="${esc(g.material)}" placeholder="80% wool, 20% nylon"></label>
     </div>
     <div class="grid2">
-      <fieldset><legend>Formality (1 lounge, 5 formal)</legend><div class="dotpick">${dotsPick("formality", g.formality)}</div></fieldset>
-      <fieldset><legend>Warmth (1 summer, 5 winter)</legend><div class="dotpick">${dotsPick("warmth", g.warmth)}</div></fieldset>
+      <fieldset><legend>Formality (1 lounge, 5 formal)${mark("formality")}</legend><div class="dotpick">${dotsPick("formality", g.formality)}</div></fieldset>
+      <fieldset><legend>Warmth (1 summer, 5 winter)${mark("warmth")}</legend><div class="dotpick">${dotsPick("warmth", g.warmth)}</div></fieldset>
     </div>
-    <fieldset><legend>Seasons (leave empty for all year)</legend><div class="chips wrap">${checks("seasons", t.seasons, g.seasons)}</div></fieldset>
-    <fieldset><legend>Occasions</legend><div class="chips wrap">${checks("occasions", t.occasions, g.occasions)}</div></fieldset>
+    <fieldset><legend>Seasons (leave empty for all year)${mark("seasons")}</legend><div class="chips wrap">${checks("seasons", t.seasons, g.seasons)}</div></fieldset>
+    <fieldset><legend>Occasions${mark("occasions")}</legend><div class="chips wrap">${checks("occasions", t.occasions, g.occasions)}</div></fieldset>
 
-    <div class="section-title spread"><span>Care</span><button type="button" class="btn ghost" data-action="care-defaults">Use defaults for this fabric</button></div>
+    <div class="section-title spread"><span>Care${mark("care")}</span><button type="button" class="btn ghost" data-action="care-defaults">Use defaults for this fabric</button></div>
     <div class="grid2">
       ${careSel("wash", { title: "Washing", machine: "Machine", hand: "Hand wash", dry_clean: "Dry clean only", spot: "Spot clean", no_wash: "Do not wash" })}
       ${careSel("temp", { title: "Max temperature", 20: "20 °C", 30: "30 °C", 40: "40 °C", 60: "60 °C", 90: "90 °C" })}
@@ -578,14 +606,9 @@ function garmentForm(g, isNew) {
     <p class="small muted" style="margin:-4px 0 0">Lay it flat. For chest, waist and hips, double the flat width.</p>
     <div class="grid3" id="gmeasure">${measureInputs(cat, g.measurements)}</div>
 
-    <div class="section-title">Purchase</div>
-    <div class="grid2">
-      <label class="field"><span>Price (€)</span><input type="number" step="0.01" min="0" name="price" value="${esc(g.price ?? "")}"></label>
-      <label class="field"><span>Bought on</span><input type="date" name="purchase_date" value="${esc(g.purchase_date || "")}"></label>
-    </div>
     <label class="field"><span>Notes</span><textarea name="notes">${esc(g.notes)}</textarea></label>
     <div class="actions"><button class="btn primary" type="submit">Save</button>
-      ${isNew && g.id ? `<button class="btn danger" type="button" data-action="discard-draft" data-id="${g.id}">Discard</button>` : `<button class="btn" type="button" data-action="close-sheet">Cancel</button>`}</div>
+      <button class="btn" type="button" data-action="close-sheet">${opts.intakeSheet ? "Back to photos" : "Cancel"}</button></div>
   </form>`;
 }
 
@@ -596,10 +619,12 @@ function measureInputs(cat, m = {}) {
   return keys.map((k) => `<label class="field"><span>${label[k] || k}</span><input type="number" step="0.5" min="0" name="m_${k}" value="${esc(m?.[k] ?? "")}"></label>`).join("");
 }
 
-function editGarment(g, isNew = false, existing = null) {
+// opts.intakeSheet: the photo sheet this form was opened from (it owns the draft).
+// opts.read: what reading the photos returned, for the "from label" markers.
+function editGarment(g, isNew = false, existing = null, opts = {}) {
   const title = isNew ? "New garment" : `Edit ${g.name}`;
   const el = existing || openSheet(title, "");
-  fillSheet(el, title, garmentForm(g, isNew));
+  fillSheet(el, title, garmentForm(g, isNew, opts));
   delete el.dataset.garment;
   const form = $("#gform", el);
   form.category.onchange = () => {
@@ -608,8 +633,10 @@ function editGarment(g, isNew = false, existing = null) {
     const m = Object.fromEntries($$("#gmeasure input", el).map((i) => [i.name.slice(2), i.value]));
     $("#gmeasure", el).innerHTML = measureInputs(cat, m);
   };
-  form.onsubmit = (ev) => { ev.preventDefault(); busy(ev.submitter, () => saveGarment(form, g, isNew)); };
-  if (isNew && g.id) el.addEventListener("sheetclose", () => { if (!el.dataset.saved) api("DELETE", `api/garments/${g.id}`).then(refreshAfterChange).catch(() => {}); });
+  form.onsubmit = (ev) => { ev.preventDefault(); busy(ev.submitter, () => saveGarment(form, g, isNew, opts)); };
+  const edited = (ev) => { const n = ev.target.name; if (n) unmark(form, FORM_FIELD[n] || n); };
+  form.addEventListener("input", edited);
+  form.addEventListener("change", edited);
 }
 
 function readGarmentForm(form) {
@@ -625,13 +652,13 @@ function readGarmentForm(form) {
     size_label: f.get("size_label"), fit_type: f.get("fit_type"), colors: f.getAll("color"), pattern: f.get("pattern"),
     material: f.get("material"), formality: Number(f.get("formality")), warmth: Number(f.get("warmth")),
     seasons: f.getAll("seasons"), occasions: f.getAll("occasions"), care, measurements,
-    price: f.get("price") || null, purchase_date: f.get("purchase_date") || null, favorite: f.get("favorite") === "on",
-    notes: f.get("notes"),
+    favorite: f.get("favorite") === "on", notes: f.get("notes"),
   };
 }
 
-async function saveGarment(form, g, isNew) {
+async function saveGarment(form, g, isNew, opts = {}) {
   const data = readGarmentForm(form);
+  if (g.status === "draft") data.status = "active";
   const el = form.closest(".sheet");
   let saved;
   if (g.id) saved = await api("PUT", `api/garments/${g.id}`, data);
@@ -639,6 +666,7 @@ async function saveGarment(form, g, isNew) {
   el.dataset.saved = "1";
   toast(isNew ? "Garment added" : "Saved");
   closeSheet();
+  if (opts.intakeSheet?.isConnected) { opts.intakeSheet.dataset.saved = "1"; closeSheet(); }
   if (currentView() === "wardrobe") { await loadGarments(); drawGrid(); }
   const top = sheets[sheets.length - 1];
   if (top?.dataset.garment) await openGarment(top.dataset.garment, top);
@@ -660,30 +688,307 @@ async function shrink(file, max = 2048) {
   } catch { return file; } // the server can still read and resize the original
 }
 
-async function intake(file) {
-  file = await shrink(file);
-  const el = openSheet("New garment", loading(S.meta.ai.vision.enabled ? "Reading the photo" : "Saving the photo"));
-  const fd = new FormData(); fd.append("file", file); fd.append("profile_id", S.profileId);
-  try {
-    const g = await api("POST", "api/intake", fd);
-    editGarment(g, true, el);
-    $(".sheet-body", el).insertAdjacentHTML("afterbegin", `<div class="gallery" style="margin-bottom:14px"><figure><img src="${media(g.photo)}" alt=""></figure></div>`);
-  } catch (e) { closeSheet(); fail(e); }
+// One pass: photos of the garment, its care label and its tag go into a draft as they're taken,
+// one read fills in the form, one save. The draft survives the browser being closed for a day.
+const PHOTO_CAPTION = { item: "Garment", label: "Care label", tag: "Tag", worn: "Worn" };
+const roleName = (p) => p.is_primary ? "Main photo" : PHOTO_CAPTION[p.kind] || human(p.kind);
+let pickTarget = null;
+
+function pickPhotos(src, target) {
+  pickTarget = target;
+  $(src === "camera" ? "#camera-file" : "#gallery-file").click();
 }
 
-async function uploadPhoto(garmentId, kind, file) {
-  file = await shrink(file, kind === "label" ? 2400 : 2048);
-  const fd = new FormData(); fd.append("file", file); fd.append("kind", kind);
-  if (kind === "label") {
-    toast(S.meta.ai.vision.enabled ? "Reading the care label" : "Saving the label photo");
-    const res = await api("POST", `api/garments/${garmentId}/care-label`, fd);
-    if (res.read) toast(`Care read from the label (${res.read.confidence} confidence). Check it.`);
-    else if (res.message) toast(res.message);
-  } else {
-    await api("POST", `api/garments/${garmentId}/photos`, fd);
-    toast("Photo added");
+async function startIntake() {
+  const drafts = await api("GET", `api/garments?profile_id=${S.profileId}&status=draft`).catch(() => []);
+  const d = drafts.find((x) => x.photos.length);
+  if (!d) {
+    for (const x of drafts) api("DELETE", `api/garments/${x.id}`).catch(() => {});
+    return intakeSheet(null);
   }
+  const choice = await draftChoice(d);
+  if (choice === "continue") intakeSheet(d);
+  else if (choice === "new") {
+    await Promise.all(drafts.map((x) => api("DELETE", `api/garments/${x.id}`).catch(() => {})));
+    intakeSheet(null);
+  }
+}
+
+function startedAt(utc) {
+  const d = new Date(String(utc).replace(" ", "T") + "Z");
+  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return d.toDateString() === new Date().toDateString() ? `today at ${time}` : `yesterday at ${time}`;
+}
+
+function draftChoice(d) {
+  return new Promise((resolve) => {
+    const el = openSheet("Continue the garment you started?", `
+      <p style="margin-top:0">You started adding a garment ${esc(startedAt(d.created_at))} and didn't save it.</p>
+      <div class="intake-strip">${d.photos.map((p) => `<figure><img src="${thumb(p.filename)}" alt=""></figure>`).join("")}</div>
+      <div class="actions"><button class="btn primary" data-c="continue">Continue it</button><button class="btn" data-c="new">Start a new one</button></div>`);
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    el.addEventListener("sheetclose", () => finish(null));
+    $$("[data-c]", el).forEach((b) => { b.onclick = () => { finish(b.dataset.c); closeSheet(); }; });
+  });
+}
+
+function intakeSheet(draft) {
+  const st = {
+    gid: draft?.id || null, keep: new Set(), queue: Promise.resolve(), seq: 0, error: "", closed: false, forced: false,
+    items: (draft?.photos || []).map((p) => ({ key: "p" + p.id, photo: p, status: "done" })),
+  };
+  const el = openSheet("New garment", "");
+  el.intake = st;
+  drawIntake(el);
+  el.beforeClose = () => {
+    if (el.dataset.saved || el.dataset.discard) return true;
+    const n = st.items.filter((i) => i.photo).length;
+    if (n < 2) return true;
+    confirmSheet("Discard this garment?", `Its ${n} photos will be deleted.`, "Discard").then((yes) => {
+      if (yes && el.isConnected) { el.dataset.discard = "1"; closeSheet(); }
+    });
+    return false;
+  };
+  el.addEventListener("sheetclose", (ev) => {
+    st.closed = true;
+    st.forced = !!ev.detail?.force;
+    for (const i of st.items) if (i.url) URL.revokeObjectURL(i.url);
+    if (!el.dataset.saved && !st.forced && st.gid) discardDraft(st.gid);
+  });
+  el.addEventListener("click", (ev) => intakeClick(el, ev));
+  return el;
+}
+
+function discardDraft(gid) {
+  api("DELETE", `api/garments/${gid}`).catch(() => {});
+}
+
+function drawIntake(el) {
+  const st = el.intake;
+  if (!el.isConnected) return;
+  const scrolled = $(".intake-strip", el)?.scrollLeft || 0;
+  const ai = S.meta.ai.vision.enabled;
+  const uploading = st.items.some((i) => i.status === "uploading" || i.status === "queued");
+  const ready = !!st.gid && st.items.some((i) => i.photo) && !uploading;
+  const tile = (i) => {
+    if (i.photo) {
+      const p = i.photo;
+      return `<figure><img src="${thumb(p.filename)}" alt="">
+        <button type="button" class="rm" data-rm="${p.id}" aria-label="Remove photo">${ICON_X}</button>
+        <button type="button" class="role${p.is_primary ? " main" : ""}" data-role="${p.id}" title="Tap to change">${esc(roleName(p))}</button></figure>`;
+    }
+    if (i.status === "error") {
+      return `<figure class="err"><img src="${i.url}" alt=""><button type="button" class="rm" data-drop="${i.key}" aria-label="Remove photo">${ICON_X}</button>
+        <button type="button" class="role" data-retry="${i.key}">Retry upload</button></figure>`;
+    }
+    return `<figure class="busy"><img src="${i.url}" alt=""><span class="spinner" aria-label="Uploading"></span><span class="role ghost">Uploading</span></figure>`;
+  };
+  fillSheet(el, "New garment", `
+    <p class="small muted" style="margin-top:0">Photograph the garment on a plain background, then its care label and its brand or size tag, close up and in good light.${ai ? " Everything is read in one go." : ""}</p>
+    ${st.items.length ? `<div class="intake-strip">${st.items.map(tile).join("")}</div>` : ""}
+    <div class="pick-row" role="group" aria-label="Add photos">
+      <button class="btn" type="button" data-pick="camera">${ICON_CAMERA}Camera</button>
+      <button class="btn" type="button" data-pick="gallery">${ICON_GALLERY}Gallery</button></div>
+    ${st.items.some((i) => i.photo) ? `<p class="small muted">Tap the label under a photo to change what it shows${ai ? "; reading the photos also works it out" : ""}.</p>` : ""}
+    ${st.error ? `<div class="note warn small">${esc(st.error)}</div>` : ""}
+    <div class="actions">
+      <button class="btn primary" type="button" data-go ${ready ? "" : "disabled"} data-busy="${ai ? "Reading photos" : ""}">${ai ? (st.error ? "Try again" : "Read photos") : "Continue"}</button>
+      ${ai && st.error ? `<button class="btn" type="button" data-manual>Fill in by hand</button>` : ""}
+      <button class="btn ghost danger" type="button" data-action="close-sheet">Discard</button>
+    </div>`);
+  const strip = $(".intake-strip", el);
+  if (strip) strip.scrollLeft = st.follow ? strip.scrollWidth : scrolled;
+  st.follow = false;
+}
+
+async function intakeClick(el, ev) {
+  const st = el.intake;
+  const b = ev.target.closest("button");
+  if (!b || !el.contains(b)) return;
+  try {
+    if (b.dataset.pick) return pickPhotos(b.dataset.pick, { type: "intake", el });
+    if (b.dataset.go !== undefined) return await busy(b, () => intakeGo(el));
+    if (b.dataset.manual !== undefined) return await busy(b, () => intakeGo(el, true));
+    if (b.dataset.retry) {
+      const item = st.items.find((i) => i.key === b.dataset.retry);
+      if (item) queueUpload(el, item);
+      return;
+    }
+    if (b.dataset.drop) {
+      const item = st.items.find((i) => i.key === b.dataset.drop);
+      if (item?.url) URL.revokeObjectURL(item.url);
+      st.items = st.items.filter((i) => i !== item);
+      return drawIntake(el);
+    }
+    if (b.dataset.rm) {
+      b.disabled = true;
+      const g = await api("DELETE", `api/photos/${b.dataset.rm}`);
+      return syncIntake(el, g);
+    }
+    if (b.dataset.role) {
+      const id = Number(b.dataset.role);
+      const p = st.items.find((i) => i.photo?.id === id)?.photo;
+      if (!p) return;
+      b.disabled = true;
+      // Garment -> Main photo -> Care label -> Tag -> Garment
+      const g = p.kind === "item" && !p.is_primary ? await api("POST", `api/photos/${id}`)
+        : await api("PATCH", `api/photos/${id}`, { kind: p.is_primary ? "label" : p.kind === "label" ? "tag" : "item" });
+      st.keep.add(id);
+      return syncIntake(el, g);
+    }
+  } catch (e) { fail(e); drawIntake(el); }
+}
+
+// Bring the tiles in line with the garment the server returned (kinds and the main photo can move).
+function syncIntake(el, g) {
+  const st = el.intake;
+  const byId = new Map(g.photos.map((p) => [p.id, p]));
+  st.items = st.items.filter((i) => !i.photo || byId.has(i.photo.id));
+  for (const i of st.items) if (i.photo) i.photo = byId.get(i.photo.id);
+  drawIntake(el);
+}
+
+function addIntakeFiles(el, files) {
+  const st = el.intake;
+  st.error = "";
+  for (const file of files) {
+    const item = { key: "u" + (++st.seq), file, url: URL.createObjectURL(file), status: "queued" };
+    st.items.push(item);
+    queueUpload(el, item);
+  }
+  st.follow = true;
+  drawIntake(el);
+}
+
+// Uploads run one at a time: the first creates the draft, the rest join it, in the order taken.
+function queueUpload(el, item) {
+  item.status = "queued";
+  el.intake.queue = el.intake.queue.then(() => uploadIntake(el, item));
+  drawIntake(el);
+}
+
+async function uploadIntake(el, item) {
+  const st = el.intake;
+  if (st.closed || !st.items.includes(item)) return;
+  item.status = "uploading";
+  drawIntake(el);
+  try {
+    const fd = new FormData();
+    fd.append("file", await shrink(item.file));
+    let g;
+    if (!st.gid) {
+      fd.append("profile_id", S.profileId);
+      g = await api("POST", "api/intake", fd);
+      st.gid = g.id;
+    } else {
+      fd.append("kind", "item");
+      g = await api("POST", `api/garments/${st.gid}/photos`, fd);
+    }
+    const known = new Set(st.items.filter((i) => i.photo).map((i) => i.photo.id));
+    item.photo = g.photos.filter((p) => !known.has(p.id)).sort((a, b) => b.id - a.id)[0];
+    item.status = "done";
+    URL.revokeObjectURL(item.url);
+    delete item.url;
+    // Closed while this was uploading: the draft it created or joined goes too.
+    if (st.closed && !el.dataset.saved && !st.forced) return discardDraft(st.gid);
+    syncIntake(el, g);
+  } catch (e) {
+    item.status = "error";
+    if (!st.closed) toast(`A photo didn't upload: ${e.message}`, true);
+    drawIntake(el);
+  }
+}
+
+async function intakeGo(el, manual = false) {
+  const st = el.intake;
+  if (S.meta.ai.vision.enabled && !manual) {
+    let res;
+    try {
+      res = await api("POST", `api/garments/${st.gid}/read`, { keep: [...st.keep] });
+    } catch (e) {
+      st.error = e.message;
+      drawIntake(el);
+      return;
+    }
+    st.error = "";
+    syncIntake(el, res.garment);
+    editGarment(res.garment, true, null, { intakeSheet: el, read: res.read });
+  } else {
+    editGarment(await api("GET", `api/garments/${st.gid}`), true, null, { intakeSheet: el });
+  }
+}
+
+// Photos added to a saved garment are garment photos until a re-read works out which are labels.
+async function addGarmentPhotos(id, files) {
+  toast(files.length > 1 ? `Uploading ${files.length} photos` : "Uploading the photo");
+  let added = 0;
+  for (const file of files) {
+    const fd = new FormData();
+    fd.append("file", await shrink(file));
+    fd.append("kind", "item");
+    try { await api("POST", `api/garments/${id}/photos`, fd); added++; } catch (e) { fail(e); }
+  }
+  if (added) toast(S.meta.ai.vision.enabled ? `${added === 1 ? "Photo" : `${added} photos`} added. Tap Re-read photos to update the details.` : added === 1 ? "Photo added" : `${added} photos added`);
   await refreshAfterChange();
+}
+
+// ------------------------------------------------------------------ re-read a saved garment
+const FIELD_LABEL = { material: "Fabric", care: "Care", brand: "Brand", size_label: "Size", name: "Name", category: "Category",
+  subcategory: "Type", colors: "Colours", pattern: "Pattern", formality: "Formality", warmth: "Warmth", seasons: "Seasons", occasions: "Occasions" };
+
+function careSummary(c = {}) {
+  const parts = [careLine(c)];
+  if (c.iron) parts.push(c.iron === "no" ? "no ironing" : `iron ${c.iron}`);
+  if (c.bleach) parts.push({ any: "any bleach", non_chlorine: "oxygen bleach only", no: "no bleach" }[c.bleach] || c.bleach);
+  if (c.dry_clean && c.dry_clean !== "any") parts.push(c.dry_clean === "no" ? "no dry cleaning" : `dry clean ${c.dry_clean}`);
+  if (c.notes) parts.push(c.notes);
+  return parts.filter(Boolean).join(", ");
+}
+
+function fieldValue(field, v) {
+  if (v == null || v === "" || (Array.isArray(v) && !v.length) || (field === "care" && !v.wash)) return `<span class="muted">empty</span>`;
+  if (field === "colors") return swatches(v);
+  if (field === "care") return esc(careSummary(v));
+  if (field === "seasons" || field === "occasions") return esc(v.map(human).join(", "));
+  if (field === "formality" || field === "warmth") return dots(v);
+  if (field === "category") return esc(catLabel(v));
+  if (field === "subcategory" || field === "pattern") return esc(cap(v));
+  return esc(v);
+}
+
+async function reread(btn, id) {
+  await busy(btn, async () => {
+    const res = await api("POST", `api/garments/${id}/read`, {});
+    await refreshAfterChange(); // photo kinds may have changed
+    if (!res.proposals.length) { toast("The photos agree with what's saved. Nothing to change."); return; }
+    reviewSheet(id, res);
+  });
+}
+
+function reviewSheet(id, res) {
+  const rows = res.proposals;
+  const el = openSheet("What the photos say", `
+    <p class="small muted" style="margin-top:0">Read by ${esc(cap(res.read.provider))}. Ticked rows replace what's saved. Values read from a label or tag are ticked, and so are empty fields; guesses from the photo aren't. Untick anything you want to keep.</p>
+    <form id="review"><ul class="list review">${rows.map((r, i) => `<li><label class="row-check">
+        <input type="checkbox" name="pick" value="${i}" ${r.default_on ? "checked" : ""}>
+        <span class="grow"><span class="title">${esc(FIELD_LABEL[r.field] || human(r.field))}</span> <em class="src src-${esc(r.source)}">${esc(SOURCE_TEXT[r.source] || r.source)}</em>
+          <span class="change small"><span class="old">${fieldValue(r.field, r.old)}</span><span class="arrow" aria-label="becomes">→</span><span>${fieldValue(r.field, r.new)}</span></span></span>
+      </label></li>`).join("")}</ul>
+    <div class="actions"><button class="btn primary" type="submit">Apply</button><button class="btn" type="button" data-action="close-sheet">Cancel</button></div></form>`);
+  $("#review", el).onsubmit = (ev) => {
+    ev.preventDefault();
+    const picked = new FormData(ev.target).getAll("pick").map((i) => rows[Number(i)]);
+    if (!picked.length) { closeSheet(); return; }
+    busy(ev.submitter, async () => {
+      const values = Object.fromEntries(picked.map((r) => [r.field, r.new]));
+      const care = picked.find((r) => r.field === "care");
+      await api("POST", `api/garments/${id}/read/apply`, { values, care_from_label: care?.source === "label" });
+      toast(`Updated ${picked.length} field${picked.length === 1 ? "" : "s"}`);
+      closeSheet();
+      await refreshAfterChange();
+    });
+  };
 }
 
 // ------------------------------------------------------------------ fit log
@@ -892,7 +1197,6 @@ async function renderShop(main) {
     ${S.meta.ai.text.enabled ? `<div class="actions"><button class="btn" data-action="shop-ai" data-busy="Thinking">Get written advice</button></div><div id="shopai"></div>` : ""}
     ${r.hard_to_style.length ? `<h2>Hard to style</h2><p class="small muted" style="margin-top:-4px">No good outfit with what you have. Find it a partner or let it go.</p><ul class="list">${r.hard_to_style.map((g) => garmentRow(g)).join("")}</ul>` : ""}
     ${r.underused.length ? `<h2>Not worn in three months</h2><ul class="list">${r.underused.map((g) => garmentRow(g, g.last_worn ? `Last worn ${day(g.last_worn)}` : "Never worn")).join("")}</ul>` : ""}
-    ${r.cost_per_wear.length ? `<h2>Cost per wear</h2><ul class="list">${r.cost_per_wear.map((g) => garmentRow(g, `${money(g.cost_per_wear)} per wear, ${g.wears} wear${g.wears === 1 ? "" : "s"}`)).join("")}</ul>` : ""}
     <h2>Wishlist</h2>
     <form class="panel form-grid" id="wishform">
       <div class="grid2"><label class="field"><span>What</span><input type="text" name="title" placeholder="Grey flannel trousers" required></label>
@@ -963,11 +1267,10 @@ const actions = {
   settings: () => settingsSheet(),
   profile: (b) => { S.profileId = Number(b.dataset.id); store.set("profile", S.profileId); S.suggestions = null; S.anchor = null; renderProfiles(); route(); },
   filter: (b) => { S.filter = b.dataset.f; store.set("filter", S.filter); $$(".chips .chip").forEach((c) => c.setAttribute("aria-pressed", c === b)); drawGrid(); },
-  add: () => $("#intake-file").click(),
+  add: () => startIntake(),
   "new-garment": () => editGarment({ name: "", category: S.filter in (S.meta.taxonomy.categories) ? S.filter : "top", colors: [], seasons: [], occasions: [], care: {} }, true),
   "open-garment": (b) => openGarment(b.dataset.id).catch((e) => { closeSheet(); fail(e); }),
   "edit-garment": async (b) => { const g = await api("GET", `api/garments/${b.dataset.id}`); editGarment(g); },
-  "discard-draft": () => closeSheet(),
   "delete-garment": async (b) => {
     if (!(await confirmSheet("Delete this garment?", "Its photos, wear history and fit notes go too. To keep the history, archive it instead."))) return;
     await api("DELETE", `api/garments/${b.dataset.id}`); closeAllSheets(); toast("Deleted"); route();
@@ -986,14 +1289,16 @@ const actions = {
   },
   "fit-log": (b) => fitLogSheet(b.dataset.id),
   "del-fitlog": async (b) => { await api("DELETE", `api/fit-logs/${b.dataset.id}`); refreshAfterChange(); },
-  "add-photo": (b) => { const inp = $("#photo-file"); inp.dataset.garment = b.dataset.id; inp.dataset.kind = b.dataset.kind; inp.click(); },
-  "add-colour": () => { const box = $("#colours"); if ($$("input[type=color]", box).length >= 4) return; box.querySelector("button").insertAdjacentHTML("beforebegin", `<label><input type="color" name="color" value="#888888" aria-label="Colour"></label>`); },
-  "remove-colour": () => { const all = $$("#colours label"); if (all.length > 1) all[all.length - 1].remove(); },
+  "add-photos": (b) => pickPhotos(b.dataset.src, { type: "garment", id: b.dataset.id }),
+  reread: (b) => reread(b, b.dataset.id),
+  "add-colour": () => { const box = $("#colours"); if ($$("input[type=color]", box).length >= 4) return; box.querySelector("button").insertAdjacentHTML("beforebegin", `<label><input type="color" name="color" value="#888888" aria-label="Colour"></label>`); unmark($("#gform"), "colors"); },
+  "remove-colour": () => { const all = $$("#colours label"); if (all.length > 1) { all[all.length - 1].remove(); unmark($("#gform"), "colors"); } },
   "care-defaults": async () => {
     const form = $("#gform");
     const c = await api("GET", `api/care/defaults?material=${encodeURIComponent(form.material.value)}&category=${form.category.value}`);
     for (const k of ["wash", "temp", "cycle", "dry", "iron", "dry_clean"]) if (form["care_" + k]) form["care_" + k].value = c[k] ?? "";
     form.care_wash_after.value = c.wash_after ?? 0; form.care_notes.value = c.notes || "";
+    unmark(form, "care");
     toast(form.material.value ? `Care set for ${form.material.value}` : "Generic care set; add the fabric for better defaults");
   },
   occasion: (b) => { S.look.occasion = b.dataset.o; store.set("occasion", S.look.occasion); $$('[data-action="occasion"]').forEach((c) => c.setAttribute("aria-pressed", c === b)); },
@@ -1040,12 +1345,18 @@ document.addEventListener("change", (ev) => {
   else if (el.dataset.change === "appearance") { store.set("appearance", el.value); applyTheme(); }
 });
 
-$("#intake-file").addEventListener("change", (ev) => { const f = ev.target.files[0]; ev.target.value = ""; if (f) intake(f); });
-$("#photo-file").addEventListener("change", (ev) => {
-  const f = ev.target.files[0]; const { garment, kind } = ev.target.dataset; ev.target.value = "";
-  if (f) uploadPhoto(garment, kind, f).catch(fail);
-});
-$("#backdrop").addEventListener("click", closeSheet);
+for (const id of ["#camera-file", "#gallery-file"]) {
+  $(id).addEventListener("change", (ev) => {
+    const files = [...ev.target.files].filter((f) => /^image\//.test(f.type) || !f.type);
+    ev.target.value = "";
+    const t = pickTarget;
+    pickTarget = null;
+    if (!files.length || !t) return;
+    if (t.type === "intake") { if (t.el.isConnected) addIntakeFiles(t.el, files); }
+    else addGarmentPhotos(t.id, files).catch(fail);
+  });
+}
+$("#backdrop").addEventListener("click", () => closeSheet());
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && sheets.length) closeSheet(); });
 window.addEventListener("hashchange", () => { closeAllSheets(); route(); });
 

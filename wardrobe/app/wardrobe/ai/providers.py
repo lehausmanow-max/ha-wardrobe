@@ -1,6 +1,6 @@
 """Pluggable AI backends. Standard library only, so the add-on stays small.
 
-Each provider exposes ask(prompt, images=None, want_json=False, system=None) -> str.
+Each provider exposes ask(prompt, images=None, want_json=False, system=None, max_tokens=None, timeout=None) -> str.
 """
 
 import json
@@ -38,7 +38,7 @@ class OllamaProvider:
         self.url = url.rstrip("/")
         self.model = model
 
-    def ask(self, prompt, images=None, want_json=False, system=None) -> str:
+    def ask(self, prompt, images=None, want_json=False, system=None, max_tokens=None, timeout=None) -> str:
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -50,7 +50,7 @@ class OllamaProvider:
                    "options": {"temperature": 0.3}}
         if want_json:
             payload["format"] = "json"
-        data = _post(f"{self.url}/api/chat", payload, {}, timeout=180)
+        data = _post(f"{self.url}/api/chat", payload, {}, timeout=max(180, timeout or 0))
         return data.get("message", {}).get("content", "")
 
 
@@ -62,7 +62,7 @@ class ClaudeProvider:
         self.api_key = api_key
         self.model = model
 
-    def ask(self, prompt, images=None, want_json=False, system=None) -> str:
+    def ask(self, prompt, images=None, want_json=False, system=None, max_tokens=None, timeout=None) -> str:
         content = []
         for media_type, b64 in images or []:
             content.append({"type": "image",
@@ -70,12 +70,12 @@ class ClaudeProvider:
         if want_json:
             prompt += "\n\nRespond with a single JSON object and nothing else."
         content.append({"type": "text", "text": prompt})
-        payload = {"model": self.model, "max_tokens": 1500,
+        payload = {"model": self.model, "max_tokens": max_tokens or 1500,
                    "messages": [{"role": "user", "content": content}]}
         if system:
             payload["system"] = system
         data = _post(self.API, payload,
-                     {"x-api-key": self.api_key, "anthropic-version": "2023-06-01"}, timeout=90)
+                     {"x-api-key": self.api_key, "anthropic-version": "2023-06-01"}, timeout=timeout or 90)
         return "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
 
 

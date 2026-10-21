@@ -1,4 +1,29 @@
 # Changelog
+## 0.3.0
+
+- Add a garment from several photos at once: the garment, its care label and
+  its brand or size tag. Camera takes one per tap, Gallery picks several. One
+  read fills in the details, including brand, size, fibre composition and care
+  from the labels; what came from a label or tag is marked, and you save once.
+- A label or tag beats the photo: fibre composition from the care label
+  replaces a fabric guessed from the look, the brand on the tag replaces a logo.
+- Tap the label under a photo to say what it shows: Garment, Main photo, Care
+  label or Tag.
+- Existing garments: add photos with Camera or Gallery, then Re-read photos.
+  Changes are shown for you to tick; values from a label or tag are ticked,
+  what you typed yourself isn't.
+- A garment you started but didn't save is kept as a draft for a day, so you
+  can continue it, for example after the phone closed the browser while you
+  were taking photos. Leaving with two or more photos asks before discarding.
+- Purchase price and bought-on are hidden. Stored values are kept and stay in
+  the export. Cost per wear is gone from the shopping page.
+- Read care label is replaced by Re-read photos.
+- Fix: a fibre composition read from a label now replaces the guess from the
+  photo.
+- The app restarts by itself if it stops responding, and is built on a pinned
+  base image.
+- No database migration; going back to 0.2.1 stays safe. In 0.2.1, unfinished
+  drafts would show as garments and tag photos would be captioned Worn.
 ## 0.2.1
 
 - Glass themes such as Frosted Glass now carry over: the theme's background
