@@ -1,5 +1,5 @@
 name: Wardrobe
-version: "0.3.0"
+version: "0.4.0"
 slug: wardrobe
 description: >-
   A shared wardrobe for your household: garments with photos, outfit
@@ -17,8 +17,12 @@ panel_icon: mdi:hanger
 panel_title: Wardrobe
 # Visible to non-admin users too, so the whole household can use it.
 panel_admin: false
-# Reads a weather entity to dress for the temperature.
+# Reads a weather entity and its forecast, publishes today's look as a sensor, listens for commands.
 homeassistant_api: true
+# The picture of today's look goes to /media/wardrobe, where the phone can fetch it.
+map:
+  - type: media
+    read_only: false
 backup: hot
 # Restart the app when it stops accepting connections. TCP, because the app answers HTTP only to Ingress.
 watchdog: tcp://[HOST]:[PORT:8099]

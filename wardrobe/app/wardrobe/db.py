@@ -9,9 +9,10 @@ from . import config
 
 JSON_COLUMNS = {
     "garments": ["colors", "seasons", "occasions", "care", "measurements"],
-    "profiles": ["measurements"],
+    "profiles": ["measurements", "settings"],
     "fit_logs": ["areas"],
     "wishlist": ["colors"],
+    "daily_looks": ["options", "context"],
 }
 
 MIGRATIONS = [
@@ -110,6 +111,23 @@ MIGRATIONS = [
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     """,
+    # v2 (0.4.0): profiles bound to a Home Assistant user ID, per-person settings, today's look
+    """
+    ALTER TABLE profiles ADD COLUMN ha_user_id TEXT DEFAULT '';
+    ALTER TABLE profiles ADD COLUMN settings TEXT NOT NULL DEFAULT '{}';
+    CREATE TABLE daily_looks (
+        id INTEGER PRIMARY KEY,
+        profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        day TEXT NOT NULL,
+        options TEXT NOT NULL DEFAULT '[]',
+        pick INTEGER NOT NULL DEFAULT 0,
+        context TEXT NOT NULL DEFAULT '{}',
+        worn INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (profile_id, day)
+    );
+    """,
 ]
 
 
@@ -140,8 +158,13 @@ def init() -> None:
         conn.execute("PRAGMA journal_mode = WAL")
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         for idx, sql in enumerate(MIGRATIONS[version:], start=version + 1):
-            conn.executescript(sql)
-            conn.execute(f"PRAGMA user_version = {idx}")
+            # One transaction per migration, version included: a failed upgrade leaves the old schema.
+            try:
+                conn.executescript(f"BEGIN;\n{sql}\nPRAGMA user_version = {idx};\nCOMMIT;")
+            except Exception:
+                if conn.in_transaction:
+                    conn.rollback()
+                raise
         conn.commit()
     finally:
         conn.close()

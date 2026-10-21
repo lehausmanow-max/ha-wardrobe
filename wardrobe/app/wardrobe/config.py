@@ -13,6 +13,10 @@ MEDIA_DIR = DATA_DIR / "media"
 THUMB_DIR = MEDIA_DIR / "thumbs"
 DB_PATH = DATA_DIR / "wardrobe.db"
 OPTIONS_FILE = DATA_DIR / "options.json"
+# Home Assistant's media folder (mapped in config.yaml), for the look collages the phone shows.
+# Created on first write only; dev and tests point it at a folder under DATA_DIR.
+HA_MEDIA_DIR = Path(os.environ.get("WARDROBE_HA_MEDIA_DIR", "/media/wardrobe"))
+HA_MEDIA_URL = "/media/local/wardrobe"
 
 DEFAULTS = {
     # Which backend answers text questions (look styling, shopping advice).

@@ -245,6 +245,10 @@ button.linkish { all: unset; cursor: pointer; display: flex; gap: 12px; align-it
 .score small { font: 500 12px var(--body); color: var(--muted); margin-left: 2px; }
 .reasons { margin: 0; padding-left: 18px; font-size: 13.5px; }
 .reasons li.warn { color: var(--warn); }
+#today:not(:empty) { margin: 12px 0 4px; }
+.look.today { border-left: 3px solid var(--indigo); }
+.btn.small { min-height: 28px; font-size: 13px; padding: 0 6px; }
+.btn:disabled:not(:has(.spinner)) { cursor: default; }
 .ai-pick { margin-top: 8px; font-size: 13.5px; }
 
 /* ------------------------------------------------ care symbols */

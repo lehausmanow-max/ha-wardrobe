@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 
@@ -14,7 +15,8 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Respon
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import ai, care, colors, config, db, fit, ha, images, intake, matching, shopping, taxonomy
+from . import ai, care, colors, config, db, fit, ha, hass, images, intake, matching, shopping, taxonomy, today
+from .garments import enrich, last_worn_map, list_garments, look_ratings
 
 log = logging.getLogger("wardrobe")
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -144,58 +146,6 @@ def finish_care(raw: dict, from_label: bool, stored: dict) -> dict:
     return c
 
 
-def _wear_stats(conn, ids: list[int]) -> dict[int, dict]:
-    if not ids:
-        return {}
-    marks = ",".join("?" * len(ids))
-    stats = {i: {"wear_count": 0, "last_worn": None, "wears_since_wash": 0} for i in ids}
-    for r in conn.execute(f"SELECT garment_id, COUNT(*) n, MAX(worn_on) last FROM wears "
-                          f"WHERE garment_id IN ({marks}) GROUP BY garment_id", ids):
-        stats[r["garment_id"]].update(wear_count=r["n"], last_worn=r["last"])
-    for r in conn.execute(
-            f"SELECT w.garment_id, COUNT(*) n FROM wears w JOIN garments g ON g.id = w.garment_id "
-            f"WHERE w.garment_id IN ({marks}) AND (g.last_washed IS NULL OR w.created_at > g.last_washed) "
-            f"GROUP BY w.garment_id", ids):
-        stats[r["garment_id"]]["wears_since_wash"] = r["n"]
-    return stats
-
-
-def _photos(conn, ids: list[int]) -> dict[int, list[dict]]:
-    out = {i: [] for i in ids}
-    if not ids:
-        return out
-    marks = ",".join("?" * len(ids))
-    for r in conn.execute(f"SELECT * FROM photos WHERE garment_id IN ({marks}) "
-                          f"ORDER BY is_primary DESC, id", ids):
-        out[r["garment_id"]].append(dict(r))
-    return out
-
-
-def enrich(conn, garments: list[dict]) -> list[dict]:
-    ids = [g["id"] for g in garments]
-    photos = _photos(conn, ids)
-    stats = _wear_stats(conn, ids)
-    for g in garments:
-        g["photos"] = photos.get(g["id"], [])
-        item_photos = [p for p in g["photos"] if p["kind"] == "item"]
-        g["photo"] = (next((p for p in item_photos if p["is_primary"]), None)
-                      or (item_photos[0] if item_photos else None))
-        g["photo"] = g["photo"]["filename"] if g["photo"] else None
-        g.update(stats.get(g["id"], {}))
-        wash_after = int((g.get("care") or {}).get("wash_after") or 0)
-        g["wash_due"] = bool(wash_after and g["wears_since_wash"] >= wash_after and g["status"] == "active")
-        g["color_names"] = [colors.name_of(c) for c in g.get("colors") or []]
-        # Bleach shows only when it was read from a care label (see care.label_bleach). Garments
-        # saved before 0.2.0 carry no marker; for those a care-label photo counts as one.
-        c = g.get("care") or {}
-        if "bleach_from_label" not in c and c.get("bleach"):
-            c["bleach_from_label"] = any(p["kind"] == "label" for p in g["photos"])
-        if not (c.get("bleach") and c.get("bleach_from_label")):
-            c.pop("bleach", None)
-            c.pop("bleach_from_label", None)
-    return garments
-
-
 def get_garment(conn, gid: int) -> dict:
     g = db.row("garments", conn.execute("SELECT * FROM garments WHERE id = ?", (gid,)).fetchone())
     if not g:
@@ -208,35 +158,6 @@ def get_profile(conn, pid: int) -> dict:
     if not p:
         fail(404, "Profile not found")
     return p
-
-
-def list_garments(conn, profile_id: int, statuses=None) -> list[dict]:
-    """A profile's garments, drafts left out."""
-    q = "SELECT * FROM garments WHERE profile_id = ? AND status != ?"
-    args: list = [profile_id, taxonomy.DRAFT]
-    if statuses:
-        q += f" AND status IN ({','.join('?' * len(statuses))})"
-        args += list(statuses)
-    return enrich(conn, db.rows("garments", conn.execute(q + " ORDER BY category, name", args)))
-
-
-def last_worn_map(conn, profile_id: int) -> dict[int, date]:
-    out = {}
-    for r in conn.execute("SELECT w.garment_id, MAX(w.worn_on) d FROM wears w JOIN garments g "
-                          "ON g.id = w.garment_id WHERE g.profile_id = ? GROUP BY w.garment_id",
-                          (profile_id,)):
-        out[r["garment_id"]] = date.fromisoformat(r["d"])
-    return out
-
-
-def look_ratings(conn, profile_id: int) -> dict:
-    ratings: dict = {}
-    looks = conn.execute("SELECT id, rating FROM looks WHERE profile_id = ?", (profile_id,)).fetchall()
-    for look in looks:
-        ids = frozenset(r[0] for r in conn.execute(
-            "SELECT garment_id FROM look_items WHERE look_id = ?", (look["id"],)))
-        ratings[ids] = look["rating"]
-    return ratings
 
 
 def provider(kind: str):
@@ -301,20 +222,38 @@ async def media(request: Request):
 
 # ------------------------------------------------------------------ meta and profiles
 
+def match_profile(conn, user: dict) -> int | None:
+    """The profile of the Home Assistant user: by user ID first, then by username or display name.
+    A name match on a profile that isn't linked yet links it, so from then on the ID decides."""
+    profiles = db.rows("profiles", conn.execute("SELECT * FROM profiles ORDER BY id"))
+    uid = (user.get("id") or "").strip()
+    if uid:
+        hit = next((p for p in profiles if p.get("ha_user_id") == uid), None)
+        if hit:
+            return hit["id"]
+    names = {x.lower() for x in (user.get("name"), user.get("display_name")) if x}
+    for p in profiles:
+        if uid and p.get("ha_user_id"):
+            continue  # linked to someone else
+        if (p.get("ha_user") or "").lower() in names or p["name"].lower() in names:
+            if uid:
+                settings = (p.get("settings") or {}) | {
+                    "ha_display_name": (user.get("display_name") or user.get("name") or "")[:80]}
+                db.update(conn, "profiles", p["id"], {"ha_user_id": uid[:64], "settings": settings})
+                log.info("Linked profile %s to its Home Assistant user", p["id"])
+            return p["id"]
+    return None
+
+
 async def api_meta(request: Request):
     user = ha.ingress_user(request.headers)
     with db.connect() as conn:
+        matched = match_profile(conn, user)
         profiles = db.rows("profiles", conn.execute("SELECT * FROM profiles ORDER BY id"))
-    matched = None
-    names = {x.lower() for x in (user["name"], user["display_name"]) if x}
-    for p in profiles:
-        if (p.get("ha_user") or "").lower() in names or p["name"].lower() in names:
-            matched = p["id"]
-            break
     return ok({"version": config.VERSION, "taxonomy": taxonomy.meta(), "ai": ai.describe(config.OPTIONS),
                "ha_user": user, "matched_profile": matched, "profiles": profiles,
                "weather_configured": bool(config.OPTIONS.get("weather_entity")),
-               "running_in_ha": bool(config.SUPERVISOR_TOKEN)})
+               "running_in_ha": bool(config.SUPERVISOR_TOKEN), "ha_bridge": hass.status()})
 
 
 async def api_profiles(request: Request):
@@ -346,6 +285,12 @@ async def api_profile(request: Request):
             vals["name"] = str(data["name"] or "").strip()[:40] or None
         if "ha_user" in data:
             vals["ha_user"] = str(data["ha_user"] or "")[:60]
+        if data.get("unlink_ha"):
+            # Only unlinking: a link is made by the person opening the app, never typed in.
+            settings = dict(get_profile(conn, pid).get("settings") or {})
+            settings.pop("ha_display_name", None)
+            vals["ha_user_id"] = ""
+            vals["settings"] = settings
         if "color" in data:
             vals["color"] = colors.normalize_hex(data["color"] or "") or "#2b3a67"
         if "style_notes" in data:
@@ -756,6 +701,47 @@ async def api_wear_items(request: Request):
     return ok({"logged": len(ids), "date": worn_on})
 
 
+# ------------------------------------------------------------------ today's look
+
+def _today_profile(conn, pid) -> dict:
+    try:
+        return get_profile(conn, int(pid or 0))
+    except (TypeError, ValueError):
+        fail(400, "profile_id must be a number")
+
+
+def _today_run(pid, action: str) -> dict:
+    """Blocking: run a today action for a profile and return the view."""
+    with db.connect() as conn:
+        p = _today_profile(conn, pid)
+        if action == "next":
+            row = today.next(conn, p)
+        elif action == "wear":
+            row, _ = today.wear(conn, p)
+        else:
+            row = today.current(conn, p)
+        return today.view(conn, p, row)
+
+
+async def api_today(request: Request):
+    pid = int_param(request, "profile_id", required=True)
+    return ok(await run_in_threadpool(_today_run, pid, "current"))
+
+
+async def api_today_next(request: Request):
+    pid = (await body(request)).get("profile_id")
+    view = await run_in_threadpool(_today_run, pid, "next")
+    hass.notify_app_change(view["profile_id"], hass.LOOK_READY)
+    return ok(view)
+
+
+async def api_today_wear(request: Request):
+    pid = (await body(request)).get("profile_id")
+    view = await run_in_threadpool(_today_run, pid, "wear")
+    hass.notify_app_change(view["profile_id"], hass.LOOK_WORN)
+    return ok(view)
+
+
 # ------------------------------------------------------------------ fit
 
 async def api_fit_log(request: Request):
@@ -984,6 +970,9 @@ routes = [
     Route("/api/looks/{id:int}", api_look, methods=["PUT", "DELETE"]),
     Route("/api/looks/{id:int}/wear", api_look_wear, methods=["POST"]),
     Route("/api/wear", api_wear_items, methods=["POST"]),
+    Route("/api/today", api_today),
+    Route("/api/today/next", api_today_next, methods=["POST"]),
+    Route("/api/today/wear", api_today_wear, methods=["POST"]),
     Route("/api/fit-logs/{id:int}", api_fit_log_delete, methods=["DELETE"]),
     Route("/api/fit/overview", api_fit_overview),
     Route("/api/shopping", api_shopping),
@@ -994,12 +983,22 @@ routes = [
 ]
 
 
+@asynccontextmanager
+async def lifespan(application):
+    await hass.start()
+    try:
+        yield
+    finally:
+        await hass.stop()
+
+
 def create_app() -> Starlette:
     logging.basicConfig(level=getattr(logging, str(config.OPTIONS.get("log_level", "info")).upper(), logging.INFO),
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     db.init()
     log.info("Wardrobe %s ready. AI: %s", config.VERSION, ai.describe(config.OPTIONS))
-    application = Starlette(routes=routes, exception_handlers={HTTPException: http_error, Exception: server_error})
+    application = Starlette(routes=routes, lifespan=lifespan,
+                            exception_handlers={HTTPException: http_error, Exception: server_error})
     application.add_middleware(IngressOnly)
     return application
 

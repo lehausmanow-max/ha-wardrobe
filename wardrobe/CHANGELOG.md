@@ -1,4 +1,20 @@
 # Changelog
+## 0.4.0
+
+- Today's look: the Looks tab opens with a look for today, picked for the
+  day's forecast (low and high, rain). Wear this logs it; Another shows the
+  next one.
+- Home Assistant gets a sensor per person, sensor.wardrobe_today_<name>,
+  with the look, the reasons and a picture, plus wardrobe_look_ready and
+  wardrobe_look_worn events. The app listens for a wardrobe_command event
+  (prepare, next, wear, refresh), so automations, dashboards and
+  notifications can drive it. The app itself never sends notifications.
+- Profiles follow the Home Assistant user they belong to, by user ID
+  instead of name. Linked once automatically; shown under Settings.
+- Rain in the forecast counts: a rain jacket is preferred, suede and
+  sandals get a warning.
+- Changes the database: going back to 0.3.0 means restoring the update
+  backup.
 ## 0.3.0
 
 - Add a garment from several photos at once: the garment, its care label and

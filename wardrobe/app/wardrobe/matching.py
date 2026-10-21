@@ -41,7 +41,7 @@ def warmth_window(temp: float) -> tuple[int, int]:
 class Context:
     def __init__(self, occasion: str | None = None, temp: float | None = None,
                  on: date | None = None, last_worn: dict | None = None,
-                 look_ratings: dict | None = None):
+                 look_ratings: dict | None = None, rain: bool = False):
         self.occasion = occasion if occasion in taxonomy.OCCASIONS else None
         self.target_formality = taxonomy.OCCASION_FORMALITY.get(self.occasion) if self.occasion else None
         self.temp = temp
@@ -49,15 +49,29 @@ class Context:
         self.season = season_of(self.on)
         self.last_worn = last_worn or {}
         self.look_ratings = look_ratings or {}
+        self.rain = bool(rain)
 
     def public(self) -> dict:
         return {"occasion": self.occasion, "temperature_c": self.temp, "season": self.season,
-                "target_formality": self.target_formality}
+                "target_formality": self.target_formality, "rain": self.rain}
 
 
 def _main(g: dict) -> str | None:
     cs = g.get("colors") or []
     return cs[0] if cs else None
+
+
+RAIN_OUTER = {"rain jacket", "trench"}
+
+
+def rain_ready(g: dict) -> bool:
+    return g["category"] == "outerwear" and (
+        g.get("subcategory") in RAIN_OUTER or "waterproof" in (g.get("notes") or "").lower())
+
+
+def _suede(g: dict) -> bool:
+    text = " ".join(str(g.get(k) or "") for k in ("material", "name", "notes")).lower()
+    return "suede" in text
 
 
 def _upper_warmth(items) -> int:
@@ -126,6 +140,24 @@ def score(items: list[dict], ctx: Context, with_weather: bool = True) -> dict:
         if ctx.temp < 14 and any(g.get("subcategory") in ("shorts", "sandals") for g in items):
             w_score -= 30
             warnings.append("Shorts or sandals in this weather")
+
+    # Rain: small nudges on top of the weather score.
+    if with_weather and ctx.rain:
+        if any(rain_ready(g) for g in items):
+            w_score += 6
+            reasons.append("Rain-ready")
+        else:
+            w_score -= 6
+            warnings.append("Rain likely: take a rain jacket")
+        for g in items:
+            if g["category"] != "shoes":
+                continue
+            if _suede(g):
+                w_score -= 8
+                warnings.append(f"Suede in the rain: the {g['name'].lower()} may stain")
+            elif g.get("subcategory") == "sandals":
+                w_score -= 8
+                warnings.append("Sandals in the rain")
 
     season_misses = [g for g in items if g.get("seasons") and ctx.season not in g["seasons"]]
     w_score -= 8 * len(season_misses)
@@ -219,7 +251,8 @@ def suggest(garments: list[dict], ctx: Context, anchor_id: int | None = None,
         mids = [anchor]
     tf = ctx.target_formality or 3
     mids = sorted(mids, key=lambda g: abs(int(g.get("formality") or 3) - tf))[:6]
-    outers = sorted(outers, key=lambda g: abs(int(g.get("formality") or 3) - tf))[:6]
+    outers = sorted(outers, key=lambda g: (ctx.rain and not rain_ready(g),
+                                           abs(int(g.get("formality") or 3) - tf)))[:6]
 
     candidates = []
     for o in with_shoes:

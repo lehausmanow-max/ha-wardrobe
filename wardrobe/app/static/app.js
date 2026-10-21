@@ -1049,14 +1049,43 @@ function lookCard(lk, i, saved = false) {
   </article>`;
 }
 
+// Today's look: the same look Home Assistant shows on the phone. Wear this and Another change it there too.
+function todayHtml(t) {
+  if (!t) return "";
+  const head = `<div class="spread"><div><h3>Today</h3><div class="small muted">${esc(t.weather || "No forecast")}${t.option ? ` · option ${esc(t.option)}` : ""}</div></div>
+    ${t.score != null ? `<div class="score" title="Match score">${t.score}<small>/100</small></div>` : ""}</div>`;
+  if (t.state === "none") return `<article class="look today">${head}<p class="muted" style="margin:10px 0 0">${esc(t.reason)}</p></article>`;
+  const items = t.items.map((g) => `<figure>${g.photo ? `<img src="${thumb(g.photo)}" alt="">` : `<div class="none"></div>`}<figcaption>${esc(g.name)}</figcaption></figure>`).join("");
+  const reasons = [...t.reasons.map((r) => `<li>${esc(r)}</li>`), ...t.warnings.map((w) => `<li class="warn">${esc(w)}</li>`)].join("");
+  return `<article class="look today">${head}
+    <div class="strip">${items}</div>
+    ${reasons ? `<ul class="reasons">${reasons}</ul>` : ""}
+    <div class="actions">${t.worn ? `<button class="btn" disabled>Logged today</button>` : `<button class="btn primary" data-action="today-wear" data-busy="Logging">Wear this</button>`}
+      ${t.options > 1 ? `<button class="btn" data-action="today-next" data-busy="Picking">Another</button>` : ""}</div>
+  </article>`;
+}
+
+async function todayAction(btn, path, msg) {
+  await busy(btn, async () => {
+    const t = await api("POST", path, { profile_id: S.profileId });
+    const box = $("#today"); if (box) box.innerHTML = todayHtml(t);
+    if (msg) toast(msg);
+  });
+}
+
 async function renderLooks(main) {
   const t = S.meta.taxonomy;
   let weather = null;
   if (S.meta.weather_configured) weather = await api("GET", "api/weather").catch(() => null);
   if (S.look.temp === "" && weather?.temperature != null) S.look.temp = Math.round(weather.temperature);
-  const saved = await api("GET", `api/looks?profile_id=${S.profileId}`);
+  const [saved, todays] = await Promise.all([
+    api("GET", `api/looks?profile_id=${S.profileId}`),
+    api("GET", `api/today?profile_id=${S.profileId}`).catch(() => null),
+  ]);
   main.innerHTML = `
     <h1>Looks</h1>
+    <div id="today">${todayHtml(todays)}</div>
+    <h2>Suggest</h2>
     <p class="lede">${weather?.temperature != null ? `Outside: ${Math.round(weather.temperature)} °C, ${esc(human(weather.condition))}. ` : ""}Pick the occasion and temperature; the app puts together what works from clean clothes.</p>
     <div class="panel context">
       <div class="chips wrap" role="radiogroup" aria-label="Occasion">${t.occasions.map((o) => `<button class="chip" aria-pressed="${S.look.occasion === o}" data-action="occasion" data-o="${o}">${cap(o)}</button>`).join("")}</div>
@@ -1227,6 +1256,9 @@ function settingsSheet() {
       <form class="panel form-grid" data-profile="${p.id}">
         <div class="grid2"><label class="field"><span>Name</span><input type="text" name="name" value="${esc(p.name)}" required></label>
         <label class="field"><span>HA username</span><input type="text" name="ha_user" value="${esc(p.ha_user)}"></label></div>
+        <p class="small muted" style="margin:0">${p.ha_user_id
+          ? `Linked to Home Assistant user <strong>${esc(p.settings?.ha_display_name || "(name not known)")}</strong> <button class="btn ghost small" type="button" data-action="unlink-ha" data-id="${p.id}">Unlink</button>`
+          : "Not linked yet: open the app once while logged in as this person"}</p>
         <label class="field"><span>Style notes, used by the AI stylist</span><textarea name="style_notes" placeholder="Smart casual, prefers muted colours, never skinny jeans">${esc(p.style_notes)}</textarea></label>
         <div class="row"><label class="row small"><input type="color" name="color" value="${esc(p.color)}" style="width:40px;height:32px;border:0;background:none"> Colour</label>
           <span style="flex:1"></span><button class="btn ghost danger" type="button" data-action="delete-profile" data-id="${p.id}" data-name="${esc(p.name)}">Delete</button><button class="btn" type="submit">Save</button></div>
@@ -1238,6 +1270,7 @@ function settingsSheet() {
     <p class="small muted">${inHa ? "HA theme follows the theme you use in Home Assistant, dark mode included." : "Not running inside Home Assistant here, so HA theme falls back to Auto."} Auto, Light and Dark use the app's own colours.</p>
     <h3 style="margin-top:24px">AI and Home Assistant</h3>
     <p class="small">${aiLine("vision", "Reading photos")}<br>${aiLine("text", "Styling and shopping advice")}<br>
+      ${S.meta.ha_bridge?.enabled ? `Home Assistant: ${S.meta.ha_bridge.connected ? "connected" : esc(S.meta.ha_bridge.last_error || "connecting")}<br>` : ""}
       Weather: ${S.meta.weather_configured ? "from Home Assistant" : "not set"}${S.meta.ha_user?.name ? `<br>Signed in to Home Assistant as ${esc(S.meta.ha_user.display_name || S.meta.ha_user.name)}` : ""}</p>
     <p class="small muted">Change these in Home Assistant under Settings, Apps, Wardrobe, Configuration.</p>
     <h3 style="margin-top:24px">Backup</h3>
@@ -1313,6 +1346,9 @@ const actions = {
     await api("POST", "api/looks", { profile_id: S.profileId, name, occasion: S.look.occasion, source: "suggested", garment_ids: lk.items.map((g) => g.id) });
     toast("Look saved"); b.textContent = "Saved"; b.disabled = true;
   }),
+  "today-wear": (b) => todayAction(b, "api/today/wear", "Logged for today"),
+  "today-next": (b) => todayAction(b, "api/today/next"),
+  "unlink-ha": (b) => busy(b, async () => { await api("PUT", `api/profiles/${b.dataset.id}`, { unlink_ha: true }); await loadMeta(); closeSheet(); settingsSheet(); }),
   "wear-look": (b) => busy(b, async () => { await api("POST", `api/looks/${b.dataset.id}/wear`, {}); toast("Logged for today"); }),
   "edit-look": async (b) => { const looks = await api("GET", `api/looks?profile_id=${S.profileId}`); buildLook(looks.find((l) => l.id === Number(b.dataset.id))); },
   "delete-look": async (b) => { if (await confirmSheet("Delete this look?", "The garments stay; only the saved combination goes.")) { await api("DELETE", `api/looks/${b.dataset.id}`); route(); } },

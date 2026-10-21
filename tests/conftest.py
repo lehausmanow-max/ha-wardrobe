@@ -6,6 +6,7 @@ import tempfile
 # config.py reads these at import and main.py runs db.init() at import,
 # so they must be set before anything from the app is imported.
 os.environ["WARDROBE_DATA_DIR"] = tempfile.mkdtemp(prefix="wardrobe-test-")
+os.environ["WARDROBE_HA_MEDIA_DIR"] = os.path.join(os.environ["WARDROBE_DATA_DIR"], "ha-media")
 os.environ["WARDROBE_AI_TEXT_PROVIDER"] = "none"
 os.environ["WARDROBE_AI_VISION_PROVIDER"] = "none"
 for name in ("WARDROBE_INGRESS_ONLY", "SUPERVISOR_TOKEN", "WARDROBE_CLAUDE_API_KEY"):
@@ -24,6 +25,7 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "MEDIA_DIR", tmp_path / "media")
     monkeypatch.setattr(config, "THUMB_DIR", tmp_path / "media" / "thumbs")
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "wardrobe.db")
+    monkeypatch.setattr(config, "HA_MEDIA_DIR", tmp_path / "ha-media")
     return tmp_path
 
 

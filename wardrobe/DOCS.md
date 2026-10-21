@@ -7,7 +7,10 @@ their own garments, measurements and fit notes; laundry is shared.
 
 1. Start the app and open **Wardrobe** from the sidebar.
 2. Add the people who share it. Fill in their Home Assistant usernames and the
-   app opens on the right wardrobe for whoever is logged in.
+   app opens on the right wardrobe for whoever is logged in. The first time
+   someone opens the app, their profile is linked to their Home Assistant user;
+   from then on the user ID decides, so renaming doesn't break it. Settings shows
+   the link and has **Unlink**.
 3. The sidebar entry is visible to non-admin users, so a partner with a regular
    Home Assistant account can use it too.
 
@@ -46,7 +49,11 @@ versions are kept and stay in the JSON export.
 **Wardrobe** — everything you own, filterable by category, with what's in the
 wash or due for one.
 
-**Looks** — pick an occasion and temperature, get outfits from clean clothes.
+**Looks** — opens with **Today**: a look for today, picked from clean clothes
+for the day's forecast (low and high, and whether rain is likely). **Wear this**
+logs it, once a day; **Another** shows the next of up to eight. It's the same
+look Home Assistant shows (see below), so the app and your phone stay in step.
+Below it, pick an occasion and temperature to get outfits from clean clothes.
 Rules behind the score: one accent colour on a neutral base beats several;
 one loud pattern per outfit; pieces within one step of formality; layers to
 match the temperature; recently worn pieces sink. **Style this** on a garment
@@ -76,7 +83,7 @@ shoes); pieces nothing goes with; pieces not worn in three months; a wishlist.
 | `ollama_text_model` | Any chat model: `qwen2.5:7b`, `llama3.1:8b`. |
 | `claude_api_key` | From console.anthropic.com, when either provider is `claude`. |
 | `claude_model` | `claude-sonnet-5-5` by default; `claude-haiku-5-5` is cheaper and fine for tagging. |
-| `weather_entity` | Optional, e.g. `weather.forecast_home`. Fills in the temperature on the Looks tab. |
+| `weather_entity` | Optional, e.g. `weather.forecast_home`. Fills in the temperature on the Looks tab; its daily forecast picks today's look. Without a daily forecast, the current temperature is used. |
 | `log_level` | `debug`, `info`, `warning` or `error`. |
 
 Everything works with both providers set to `none`; AI only fills in and
@@ -97,6 +104,69 @@ rules.
 - The text provider only ever receives garment names, categories, colour names,
   formality and your style notes.
 
+## Home Assistant: sensors, events and commands
+
+The app decides **what** to wear; Home Assistant decides **when** and **where**
+to show it. The app never sends notifications itself.
+
+### Sensor per person
+
+`sensor.wardrobe_today_<slug>`, where the slug is the person's name in ASCII
+lowercase with everything else turned into `_` (a person called "Anna B." gets
+`sensor.wardrobe_today_anna_b`). The state is a short summary of the look, or
+`none` when there aren't enough clean clothes. Attributes:
+
+| Attribute | |
+| --- | --- |
+| `profile_id`, `profile` | Who it's for. |
+| `items` | `[{id, name, category}]` |
+| `reasons`, `warnings` | Why it works (top three), and what to watch. |
+| `occasion`, `temp_low`, `temp_high`, `rain`, `condition` | What the look was picked for. |
+| `events` | Calendar events used (empty for now). |
+| `option` | Which of the options is shown, e.g. `2 of 8`. |
+| `worn` | Logged as worn today. |
+| `image`, `entity_picture` | A picture of the look, `/media/local/wardrobe/look-….jpg`. |
+| `generated_at` | When the look last changed. |
+
+States set by an app are lost when Home Assistant restarts; the app sets them
+again as soon as it reconnects, and rebuilds every look at 04:00.
+
+The picture is saved in Home Assistant's media folder (`/media/wardrobe`) and
+works in a picture-entity card and in Companion app notifications. Pictures
+older than two days are deleted.
+
+### Events the app fires
+
+- `wardrobe_look_ready`: `{profile_id, profile, slug, entity_id, summary,
+  reason, image, option, options}`, after prepare, next and refresh, and after
+  Another in the app.
+- `wardrobe_look_worn`: `{profile_id, profile, slug, items}`, after wear, and
+  after Wear this in the app.
+
+### Commands
+
+Fire a `wardrobe_command` event with `profile` (the name, slug or profile ID)
+and `action`:
+
+| Action | |
+| --- | --- |
+| `prepare` | Today's look, built if there isn't one yet. Fires `wardrobe_look_ready`. |
+| `next` | The next option. Fires `wardrobe_look_ready`. |
+| `wear` | Logs the shown look as worn today, once a day. Fires `wardrobe_look_worn`. |
+| `refresh` | Builds today's look again, for example after laundry. Fires `wardrobe_look_ready`. |
+
+To try it, open Developer tools, Events, and fire `wardrobe_command` with:
+
+```yaml
+profile: <slug>
+action: next
+```
+
+The sensor changes, and listening to `wardrobe_look_ready` there shows the
+event. An unknown person or action is logged as a warning and ignored.
+
+Settings in the app shows whether the connection to Home Assistant works.
+
 ## Data and backups
 
 Everything lives in the app's `/data` folder (a SQLite database and the photos)
@@ -109,5 +179,7 @@ downloads the data as JSON too.
   to a dated tag listed at github.com/home-assistant/docker-base.
 - **AI requests time out:** check the add-on log; local vision models on CPU can
   exceed a minute. Try a smaller model or `claude-haiku-5-5`.
-- **The app opens on the wrong person:** set Home Assistant usernames in the
-  app's Settings.
+- **The app opens on the wrong person:** **Unlink** the profile in the app's
+  Settings, then open the app once while logged in as the right person.
+- **No sensor in Home Assistant:** check Settings in the app for the Home
+  Assistant connection, and the app log for warnings.

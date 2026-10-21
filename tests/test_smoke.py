@@ -22,6 +22,8 @@ def test_meta(client):
     data = r.json()
     assert data["version"] == config.VERSION
     assert data["profiles"] == []
+    # No SUPERVISOR_TOKEN: the app starts (lifespan included) without the Home Assistant bridge.
+    assert data["running_in_ha"] is False and data["ha_bridge"]["enabled"] is False
 
 
 def test_profile_and_garment(client, profile):
