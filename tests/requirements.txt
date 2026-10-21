@@ -1,0 +1,6 @@
+# Test-only dependencies. The app's own are in wardrobe/app/requirements.txt;
+# Pillow comes from Alpine in the image, so it is installed here for tests.
+pytest
+Pillow
+# Starlette's TestClient needs httpx2 (plain httpx is deprecated in Starlette 1.x).
+httpx2
