@@ -46,20 +46,24 @@ versions are kept and stay in the JSON export.
 
 ## What each tab does
 
-**Wardrobe** — everything you own, filterable by category, with what's in the
-wash or due for one.
+The app opens on **Looks**, with today's look; the wardrobe is one tab over.
+Tapping the morning notification lands there too.
 
 **Looks** — opens with **Today**: a look for today, picked from clean clothes
 for the day's forecast (low and high, and whether rain is likely) and your
 calendar (see below). **Wear this** logs it, once a day; **Another** shows the
 next of up to eight. It's the same look Home Assistant shows (see below), so the
-app and your phone stay in step. On a day without enough clean clothes, the look
-is picked again as soon as there are: adding or washing clothes is enough.
+app and your phone stay in step. On a day without enough clean clothes, Today
+says why and has **Add clothes**, which opens the Wardrobe tab; the look is
+picked again as soon as there are enough: adding or washing clothes is enough.
 Below it, pick an occasion and temperature to get outfits from clean clothes.
 Rules behind the score: one accent colour on a neutral base beats several;
 one loud pattern per outfit; pieces within one step of formality; layers to
 match the temperature; recently worn pieces sink. **Style this** on a garment
 builds looks around it. **Build your own** scores a combination as you pick.
+
+**Wardrobe** — everything you own, filterable by category, with what's in the
+wash or due for one. **Add** (the round button) adds a garment.
 
 **Fit** — your body measurements against each garment's (ease = garment minus
 body, judged for the garment's intended fit: slim, regular, relaxed or
@@ -166,8 +170,29 @@ works in Companion app notifications. Pictures older than two days are deleted.
 
 A dashboard card can't load the sensor's `/media/local/...` picture. Each person
 also has `/media/wardrobe/today-<slug>.jpg`, which is always their current look
-(a plain "No look today" picture when there isn't one). Show it with a picture
-card:
+(a plain "No look today" picture when there isn't one). Settings in the app
+shows each person's sensor, and so their slug.
+
+**Recommended: a camera on the file.** The card then follows every new look,
+Another included, without reloading the dashboard.
+
+1. Settings, Devices & services, Add integration, **Local File**.
+2. File path `/media/wardrobe/today-<slug>.jpg`, and a name such as
+   "Wardrobe today <name>". This gives a camera entity, e.g.
+   `camera.wardrobe_today_<slug>`.
+3. Add a picture-entity card on that camera:
+
+```yaml
+type: picture-entity
+entity: camera.wardrobe_today_<slug>
+show_state: false
+tap_action:
+  action: more-info
+  entity: sensor.wardrobe_today_<slug>
+```
+
+**Simpler: a picture card.** No integration needed, but it shows the look from
+when the dashboard was loaded; reload the page to see a new one.
 
 ```yaml
 type: picture
@@ -176,8 +201,6 @@ tap_action:
   action: more-info
   entity: sensor.wardrobe_today_<slug>
 ```
-
-Settings in the app shows each person's sensor, and so their slug.
 
 ### Events the app fires
 

@@ -1,4 +1,14 @@
 # Changelog
+## 0.4.2
+
+- The app now opens on Looks with today's look; the wardrobe is one tab over.
+  Tapping the morning notification lands there too.
+- When there's no look for today, Today says why and has an Add clothes
+  button that opens the Wardrobe tab.
+- Documentation: a Local File camera on today-<slug>.jpg gives a dashboard
+  card that follows every new look without a reload.
+- No database migration; going back to 0.4.1 stays safe.
+
 ## 0.4.1
 
 - Before updating: under Configuration, the weather entity must be just its

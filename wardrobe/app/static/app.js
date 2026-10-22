@@ -377,7 +377,13 @@ function renderProfiles() {
       <span class="dot" style="background:${esc(p.color)}">${esc(p.name[0] || "?")}</span>${esc(p.name)}</button>`).join("");
 }
 
-function currentView() { return (location.hash.replace(/^#\/?/, "").split("/")[0]) || "wardrobe"; }
+// Looks, with today's look, is the start page: an empty or unknown hash opens it. The morning
+// notification opens the panel without a hash, so it lands there too.
+const VIEWS = ["looks", "wardrobe", "fit", "care", "shop"];
+function currentView() {
+  const v = location.hash.replace(/^#\/?/, "").split("/")[0];
+  return VIEWS.includes(v) ? v : "looks";
+}
 
 async function route() {
   const view = currentView();
@@ -389,7 +395,7 @@ async function route() {
   if (!S.meta.profiles.length) return renderOnboarding(main);
   const views = { wardrobe: renderWardrobe, looks: renderLooks, fit: renderFit, care: renderCare, shop: renderShop };
   main.innerHTML = loading();
-  try { await (views[view] || renderWardrobe)(main); } catch (e) { main.innerHTML = `<div class="empty"><h3>That didn't load</h3><p class="muted">${esc(e.message)}</p><button class="btn" data-action="reload">Try again</button></div>`; }
+  try { await views[view](main); } catch (e) { main.innerHTML = `<div class="empty"><h3>That didn't load</h3><p class="muted">${esc(e.message)}</p><button class="btn" data-action="reload">Try again</button></div>`; }
 }
 
 // ------------------------------------------------------------------ onboarding
@@ -1054,7 +1060,8 @@ function todayHtml(t) {
   if (!t) return "";
   const head = `<div class="spread"><div><h3>Today</h3><div class="small muted">${esc(t.weather || "No forecast")}${t.option ? ` · option ${esc(t.option)}` : ""}</div></div>
     ${t.score != null ? `<div class="score" title="Match score">${t.score}<small>/100</small></div>` : ""}</div>`;
-  if (t.state === "none") return `<article class="look today">${head}<p class="muted" style="margin:10px 0 0">${esc(t.reason)}</p></article>`;
+  if (t.state === "none") return `<article class="look today">${head}<p class="muted" style="margin:10px 0 0">${esc(t.reason)}</p>
+    <div class="actions"><a class="btn primary" href="#/wardrobe">Add clothes</a></div></article>`;
   const items = t.items.map((g) => `<figure>${g.photo ? `<img src="${thumb(g.photo)}" alt="">` : `<div class="none"></div>`}<figcaption>${esc(g.name)}</figcaption></figure>`).join("");
   const reasons = [...t.reasons.map((r) => `<li>${esc(r)}</li>`), ...t.warnings.map((w) => `<li class="warn">${esc(w)}</li>`)].join("");
   return `<article class="look today">${head}
