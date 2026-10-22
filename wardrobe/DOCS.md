@@ -33,9 +33,16 @@ Each photo uploads as soon as it's taken.
   Care label, Tag).
 - An unsaved garment is kept as a draft for a day. **Add** offers to continue
   it, for example when the phone closed the browser while the camera was open.
+- In the Home Assistant Android app there's one **Add photos** button instead:
+  that app can't open the camera from a page yet, so take the photos with the
+  camera app first and pick them there. Until its next release it also picks
+  one photo at a time.
+- **Many garments at once:** use Chrome on the phone instead, logged in to
+  Home Assistant there (the same address you use in the app). There, Camera
+  opens the camera and Gallery picks several photos at once.
 
-For a garment you already have: **Camera** or **Gallery** on its page adds
-photos, and **Re-read photos** reads them again. Changes are shown for you to
+For a garment you already have: **Camera** or **Gallery** on its page
+(**Add photos** in the Android app) adds photos, and **Re-read photos** reads them again. Changes are shown for you to
 tick; values from a label or tag are ticked, what you typed yourself isn't.
 
 Photos are resized to 2048 px on the phone before upload, and saved again on the

@@ -23,9 +23,10 @@
   <span>Add</span>
 </button>
 <!-- Camera opens the camera straight away (one photo per tap); Gallery picks several at once.
-     In the Home Assistant Android app up to 2026.10.1, app.js turns off `multiple` on Gallery:
-     that app drops every pick from a multi-select input and ignores `capture` (both fixed
-     upstream, home-assistant/android #7549 and #7550), so there Gallery picks one at a time. -->
+     In the Home Assistant Android app, app.js shows one Add photos button (gallery) instead:
+     that app ignores `capture` (home-assistant/android #7550, not released), see
+     haAppCanOpenCamera. Up to 2026.10.1 it also drops every pick from a multi-select input
+     (fixed upstream in #7549), so there app.js turns off `multiple` (haAppDropsMultiPick). -->
 <input type="file" id="camera-file" accept="image/*" capture="environment" hidden>
 <input type="file" id="gallery-file" accept="image/*" multiple hidden>
 

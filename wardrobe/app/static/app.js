@@ -498,8 +498,7 @@ async function openGarment(id, existing) {
   fillSheet(el, g.name, `
     ${photos ? `<div class="gallery">${photos}</div>` : ""}
     <div class="row photo-row" role="group" aria-label="Photos">
-      <button class="btn ghost" data-action="add-photos" data-id="${g.id}" data-src="camera">${ICON_CAMERA}Camera</button>
-      <button class="btn ghost" data-action="add-photos" data-id="${g.id}" data-src="gallery">${ICON_GALLERY}Gallery</button>
+      ${photoButtons("btn ghost", (src) => `data-action="add-photos" data-id="${g.id}" data-src="${src}"`)}
       ${S.meta.ai.vision.enabled && readable ? `<span class="grow"></span><button class="btn ghost" data-action="reread" data-id="${g.id}" data-busy="Reading">Re-read photos</button>` : ""}</div>
     <p class="muted" style="margin:12px 0 0">${[g.brand, g.size_label && `size ${g.size_label}`, cap(g.subcategory) || catLabel(g.category), g.material].filter(Boolean).map(esc).join(", ")}</p>
     <div class="row" style="margin-top:8px">${swatches(g.colors)}<span class="small">${esc((g.color_names || []).join(", "))}${g.pattern && g.pattern !== "solid" ? `, ${esc(g.pattern)}` : ""}</span></div>
@@ -794,8 +793,7 @@ function drawIntake(el) {
     <p class="small muted" style="margin-top:0">Photograph the garment on a plain background, then its care label and its brand or size tag, close up and in good light.${ai ? " Everything is read in one go." : ""}</p>
     ${st.items.length ? `<div class="intake-strip">${st.items.map(tile).join("")}</div>` : ""}
     <div class="pick-row" role="group" aria-label="Add photos">
-      <button class="btn" type="button" data-pick="camera">${ICON_CAMERA}Camera</button>
-      <button class="btn" type="button" data-pick="gallery">${ICON_GALLERY}Gallery</button></div>
+      ${photoButtons("btn", (src) => `data-pick="${src}"`)}</div>
     ${st.items.some((i) => i.photo) ? `<p class="small muted">Tap the label under a photo to change what it shows${ai ? "; reading the photos also works it out" : ""}.</p>` : ""}
     ${st.error ? `<div class="note warn small">${esc(st.error)}</div>` : ""}
     <div class="actions">
@@ -1438,18 +1436,51 @@ document.addEventListener("change", (ev) => {
   else if (el.dataset.change === "appearance") { store.set("appearance", el.value); applyTheme(); }
 });
 
-// The Home Assistant Android app up to 2026.10.1 drops every pick from an <input multiple>
-// (home-assistant/android#7548, fixed in #7549) and ignores `capture` (fixed in #7550).
-// There, Gallery picks one photo at a time; later versions and browsers keep multi-select.
-function haAppDropsMultiPick(ua = navigator.userAgent) {
-  if (!/Android/.test(ua) || !/Home Assistant\//.test(ua)) return false;
+// ---- The Home Assistant Android app's file picker. Browsers and the iOS app are left alone.
+
+// The Android app's version as [year, month, patch]; [] when the user agent has no readable
+// version; null outside the Android app.
+function haAndroidAppVersion(ua = navigator.userAgent) {
+  if (!/Android/.test(ua) || !/Home Assistant\//.test(ua)) return null;
   const m = /Home Assistant\/(\d+)\.(\d+)\.(\d+)/.exec(ua);
-  if (!m) return true; // unknown version: one at a time always works
-  const v = m.slice(1).map(Number), fixed = [2026, 10, 2];
-  for (let i = 0; i < 3; i++) if (v[i] !== fixed[i]) return v[i] < fixed[i];
-  return false;
+  return m ? m.slice(1).map(Number) : [];
+}
+
+// a >= b for versions as [year, month, patch].
+function versionAtLeast(a, b) {
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i];
+  return true;
+}
+
+// The Home Assistant Android app up to 2026.10.1 drops every pick from an <input multiple>
+// (home-assistant/android#7548, fixed in #7549). There, Gallery picks one photo at a time;
+// later versions and browsers keep multi-select.
+function haAppDropsMultiPick(ua = navigator.userAgent) {
+  const v = haAndroidAppVersion(ua);
+  if (v === null) return false;
+  if (!v.length) return true; // unknown version: one at a time always works
+  return !versionAtLeast(v, [2026, 10, 2]);
 }
 if (haAppDropsMultiPick()) $("#gallery-file").multiple = false;
+
+// The Android app can't open the camera from a page yet: it ignores `capture`, so Camera
+// opens the gallery (home-assistant/android#7550, not released). There, one Add photos button
+// replaces Camera and Gallery. When a release opens the camera, set its version here, e.g.
+// [2026, 11, 0], and Camera comes back from that version on.
+const HA_APP_CAMERA_FROM = null;
+function haAppCanOpenCamera(ua = navigator.userAgent) {
+  const v = haAndroidAppVersion(ua);
+  if (v === null) return true;
+  return !!HA_APP_CAMERA_FROM && v.length > 0 && versionAtLeast(v, HA_APP_CAMERA_FROM);
+}
+
+// Camera and Gallery, or one Add photos button that opens the gallery where Camera can't work.
+// attr(src) gives the attributes that tell the click handler which input to open.
+function photoButtons(cls, attr, ua = navigator.userAgent) {
+  if (!haAppCanOpenCamera(ua)) return `<button class="${cls}" type="button" ${attr("gallery")}>${ICON_GALLERY}Add photos</button>`;
+  return `<button class="${cls}" type="button" ${attr("camera")}>${ICON_CAMERA}Camera</button>
+      <button class="${cls}" type="button" ${attr("gallery")}>${ICON_GALLERY}Gallery</button>`;
+}
 
 for (const id of ["#camera-file", "#gallery-file"]) {
   $(id).addEventListener("change", (ev) => {

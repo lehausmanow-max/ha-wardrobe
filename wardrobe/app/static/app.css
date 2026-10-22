@@ -301,6 +301,7 @@ button.linkish { all: unset; cursor: pointer; display: flex; gap: 12px; align-it
 .photo-row .grow { flex: 1; }
 .pick-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
 .pick-row .btn { min-height: 48px; }
+.pick-row .btn:only-child { grid-column: 1 / -1; } /* one Add photos button in the Android app */
 
 /* ------------------------------------------------ intake: the photo strip of a new garment */
 .intake-strip { display: flex; gap: 10px; overflow-x: auto; margin: 4px calc(-1 * var(--gutter)) 0; padding: 4px var(--gutter) 6px; scrollbar-width: none; }

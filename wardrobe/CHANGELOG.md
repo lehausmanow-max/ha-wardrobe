@@ -1,4 +1,13 @@
 # Changelog
+## 0.4.3
+
+- In the Home Assistant Android app, Camera and Gallery did the same thing,
+  because the app can't open the camera from a page yet (being fixed there,
+  no release date). There's now one Add photos button; in a browser both
+  buttons work as before. Picking several photos should return with the next
+  Android app release. This corrects 0.4.1's note.
+- No database migration; going back to 0.4.2 stays safe.
+
 ## 0.4.2
 
 - The app now opens on Looks with today's look; the wardrobe is one tab over.
