@@ -50,9 +50,11 @@ versions are kept and stay in the JSON export.
 wash or due for one.
 
 **Looks** — opens with **Today**: a look for today, picked from clean clothes
-for the day's forecast (low and high, and whether rain is likely). **Wear this**
-logs it, once a day; **Another** shows the next of up to eight. It's the same
-look Home Assistant shows (see below), so the app and your phone stay in step.
+for the day's forecast (low and high, and whether rain is likely) and your
+calendar (see below). **Wear this** logs it, once a day; **Another** shows the
+next of up to eight. It's the same look Home Assistant shows (see below), so the
+app and your phone stay in step. On a day without enough clean clothes, the look
+is picked again as soon as there are: adding or washing clothes is enough.
 Below it, pick an occasion and temperature to get outfits from clean clothes.
 Rules behind the score: one accent colour on a neutral base beats several;
 one loud pattern per outfit; pieces within one step of formality; layers to
@@ -72,6 +74,32 @@ colour group, and garments due a wash based on wears since the last one.
 would add to what you own; gaps (rain jacket, winter coat, smart layer, smart
 shoes); pieces nothing goes with; pieces not worn in three months; a wishlist.
 
+## Calendar
+
+Under **Settings**, each person ticks the Home Assistant calendars that count
+for their look. Today's look then reads the day's events, all-day events
+included, and dresses for the most formal one it recognises: evening or smart
+first, then work, then sport. Nothing recognised, or no calendars ticked, means
+a casual day. The reason says why, e.g. "Diner at 19:00 in your calendar" or
+"Kantoor today".
+
+Events are recognised by whole words in their title, in any case, so
+"dinnerware" doesn't count as dinner. The words per occasion are under
+**Settings, Words that set the occasion**, comma-separated; English and Dutch
+words are set by default, and **Reset to defaults** puts them back.
+
+| Occasion | Default words |
+| --- | --- |
+| work | office, kantoor, op kantoor, on site, werkdag |
+| smart | interview, sollicitatie, presentation, presentatie, client, klant, wedding, bruiloft, funeral, uitvaart, ceremony |
+| evening | dinner, diner, etentje, theatre, theater, concert, party, feest, borrel |
+| sport | gym, sportschool, training, run, hardlopen, padel, tennis, yoga, zwemmen |
+
+The day's look is picked once, early in the morning; a calendar change later in
+the day counts after a `refresh` command (see below). A calendar shared by two
+people can simply be ticked for both. When the calendar can't be read, the look
+is picked for a casual day and the app log says so once.
+
 ## Configuration
 
 | Option | What it does |
@@ -83,7 +111,7 @@ shoes); pieces nothing goes with; pieces not worn in three months; a wishlist.
 | `ollama_text_model` | Any chat model: `qwen2.5:7b`, `llama3.1:8b`. |
 | `claude_api_key` | From console.anthropic.com, when either provider is `claude`. |
 | `claude_model` | `claude-sonnet-5-5` by default; `claude-haiku-5-5` is cheaper and fine for tagging. |
-| `weather_entity` | Optional, e.g. `weather.forecast_home`. Fills in the temperature on the Looks tab; its daily forecast picks today's look. Without a daily forecast, the current temperature is used. |
+| `weather_entity` | Optional. Only the entity ID, e.g. `weather.forecast_home`. Fills in the temperature on the Looks tab; its daily forecast picks today's look. Without a daily forecast, the current temperature is used. |
 | `log_level` | `debug`, `info`, `warning` or `error`. |
 
 Everything works with both providers set to `none`; AI only fills in and
@@ -122,7 +150,7 @@ lowercase with everything else turned into `_` (a person called "Anna B." gets
 | `items` | `[{id, name, category}]` |
 | `reasons`, `warnings` | Why it works (top three), and what to watch. |
 | `occasion`, `temp_low`, `temp_high`, `rain`, `condition` | What the look was picked for. |
-| `events` | Calendar events used (empty for now). |
+| `events` | Calendar events that matched: `[{summary, time}]`, time `19:00` or `all day`. |
 | `option` | Which of the options is shown, e.g. `2 of 8`. |
 | `worn` | Logged as worn today. |
 | `image`, `entity_picture` | A picture of the look, `/media/local/wardrobe/look-….jpg`. |
@@ -132,14 +160,31 @@ States set by an app are lost when Home Assistant restarts; the app sets them
 again as soon as it reconnects, and rebuilds every look at 04:00.
 
 The picture is saved in Home Assistant's media folder (`/media/wardrobe`) and
-works in a picture-entity card and in Companion app notifications. Pictures
-older than two days are deleted.
+works in Companion app notifications. Pictures older than two days are deleted.
+
+### Today's look on a dashboard
+
+A dashboard card can't load the sensor's `/media/local/...` picture. Each person
+also has `/media/wardrobe/today-<slug>.jpg`, which is always their current look
+(a plain "No look today" picture when there isn't one). Show it with a picture
+card:
+
+```yaml
+type: picture
+image: media-source://media_source/local/wardrobe/today-<slug>.jpg
+tap_action:
+  action: more-info
+  entity: sensor.wardrobe_today_<slug>
+```
+
+Settings in the app shows each person's sensor, and so their slug.
 
 ### Events the app fires
 
 - `wardrobe_look_ready`: `{profile_id, profile, slug, entity_id, summary,
-  reason, image, option, options}`, after prepare, next and refresh, and after
-  Another in the app.
+  reason, weather, image, option, options}`, after prepare, next and refresh,
+  and after Another in the app. `weather` is a line such as `8–13 °C, rain
+  likely`.
 - `wardrobe_look_worn`: `{profile_id, profile, slug, items}`, after wear, and
   after Wear this in the app.
 
@@ -166,6 +211,30 @@ The sensor changes, and listening to `wardrobe_look_ready` there shows the
 event. An unknown person or action is logged as a warning and ignored.
 
 Settings in the app shows whether the connection to Home Assistant works.
+The app log has one line each time a sensor is set, e.g. `Updated today's look
+for alex (2 of 8)`.
+
+### Morning notification (blueprint)
+
+Shortly before your phone alarm, a notification with today's look: the picture,
+the reason and the weather, and two buttons, **Wear this** and **Another**.
+Another replaces the notification with the next look; Wear this logs the wear
+and replaces it with "Logged: …". Tapping the notification opens Wardrobe.
+
+1. In the Companion app on the phone, turn on the **Next alarm** sensor
+   (Settings, Companion app, Manage sensors). Without it there's nothing to
+   time the notification by.
+2. Import the blueprint: Settings, Automations & scenes, Blueprints, Import
+   blueprint, with this URL:
+   `https://raw.githubusercontent.com/lehausmanow-max/ha-wardrobe/main/blueprints/automation/wardrobe/morning_look.yaml`
+3. Create one automation per person from it: the person's slug (Settings in the
+   app shows their sensor, `sensor.wardrobe_today_<slug>`), their phone, the
+   phone's next-alarm sensor, and how many minutes before the alarm (20 by
+   default).
+
+It fires once per alarm, when the alarm is that many minutes away. Alarms more
+than 18 hours away, and an `unknown` or `unavailable` sensor, are ignored. The
+app itself still sends nothing: the automation does.
 
 ## Data and backups
 

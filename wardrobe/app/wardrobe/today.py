@@ -4,14 +4,18 @@ The same functions serve the app (Today card) and Home Assistant (wardrobe_comma
 always show the same look. All of it is blocking database work: call it from a thread.
 """
 
+import logging
 import re
 import unicodedata
 from datetime import date
 
-from . import config, db, garments, ha, matching
+from . import agenda, config, db, garments, ha, matching
 
+log = logging.getLogger("wardrobe.today")
 COUNT = 8
 MAX_STATE = 255
+_weather_failing = False
+_calendar_failing = False
 
 
 # ------------------------------------------------------------------ names
@@ -50,33 +54,41 @@ def get_row(conn, profile_id: int, day: str) -> dict | None:
         "SELECT * FROM daily_looks WHERE profile_id = ? AND day = ?", (profile_id, day)).fetchone())
 
 
-def build(conn, profile: dict, day: str | None = None, refresh: bool = False, weather=None) -> dict:
-    """Rank today's looks and store them. An existing row is replaced only on refresh.
+def build(conn, profile: dict, day: str | None = None, refresh: bool = False, weather=None,
+          calendar=None) -> dict:
+    """Rank today's looks and store them. An existing row is replaced on refresh, and when it
+    has no look (so clothes added since count without a refresh).
 
     weather: a dict like ha.forecast() returns, or a callable taking the date and returning one
-    (called only when building). None means no weather."""
+    (called only when building). None means no weather.
+    calendar: a list of events like ha.calendar_events() returns, or a callable taking the profile
+    and the date and returning one. None means no calendar: a casual day."""
     day = day or db.today()
     existing = get_row(conn, profile["id"], day)
-    if existing and not refresh:
+    if existing and existing["options"] and not refresh:
         return existing
-    wx = weather(date.fromisoformat(day)) if callable(weather) else weather
-    wx = wx or {}
+    replace = refresh or bool(existing)
+    wx = _weather(weather, day)
+    cal = agenda.match(_events(calendar, profile, day), agenda.words_for(profile.get("settings")))
     pid = profile["id"]
     clean = garments.list_garments(conn, pid, ("active",))
-    ctx = matching.Context(occasion="casual", temp=wx.get("temp"), on=date.fromisoformat(day),
-                           last_worn=garments.last_worn_map(conn, pid),
-                           look_ratings=garments.look_ratings(conn, pid), rain=bool(wx.get("rain")))
-    looks = matching.suggest(clean, ctx, count=COUNT)
+    looks, ctx = _rank(conn, pid, clean, cal["occasion"], wx, day)
+    if not looks and cal["occasion"] != "casual":
+        # Nothing for the occasion (say, no sport clothes): a casual look beats none.
+        looks, ctx = _rank(conn, pid, clean, "casual", wx, day)
+        cal = {"occasion": "casual", "reason": "", "events": cal["events"]}
     options = [{"ids": [g["id"] for g in lk["items"]], "score": lk["score"],
                 "reasons": lk["reasons"], "warnings": lk["warnings"]} for lk in looks]
     context = {"occasion": ctx.occasion, "temp_low": wx.get("temp_low"), "temp_high": wx.get("temp_high"),
                "temp": wx.get("temp"), "rain": bool(wx.get("rain")), "condition": wx.get("condition"),
-               "weather_source": wx.get("source"), "events": []}
+               "weather_source": wx.get("source"), "events": cal["events"],
+               "occasion_reason": cal["reason"]}
     if not options:
         context["none_reason"] = _why_none(clean)
-    # Refresh replaces the day's row; a plain build that lost a race to another one keeps the winner's.
+    # Refresh (or a rebuild of a day without a look) replaces the day's row; a plain build that
+    # lost a race to another one keeps the winner's.
     on_conflict = ("DO UPDATE SET options = excluded.options, pick = 0, context = excluded.context, "
-                   "updated_at = CURRENT_TIMESTAMP") if refresh else "DO NOTHING"
+                   "updated_at = CURRENT_TIMESTAMP") if replace else "DO NOTHING"
     conn.execute(
         "INSERT INTO daily_looks (profile_id, day, options, pick, context) VALUES (?, ?, ?, 0, ?) "
         f"ON CONFLICT (profile_id, day) {on_conflict}",
@@ -84,13 +96,76 @@ def build(conn, profile: dict, day: str | None = None, refresh: bool = False, we
     return get_row(conn, pid, day)
 
 
-def current(conn, profile: dict, day: str | None = None, weather=None) -> dict:
-    """Today's row, built when missing. Weather defaults to the Home Assistant forecast."""
-    return build(conn, profile, day, refresh=False, weather=weather or forecast)
+def _rank(conn, pid: int, clean: list[dict], occasion: str, wx: dict, day: str):
+    ctx = matching.Context(occasion=occasion, temp=wx.get("temp"), on=date.fromisoformat(day),
+                           last_worn=garments.last_worn_map(conn, pid),
+                           look_ratings=garments.look_ratings(conn, pid), rain=bool(wx.get("rain")))
+    return matching.suggest(clean, ctx, count=COUNT), ctx
+
+
+def _events(calendar, profile: dict, day: str) -> list[dict]:
+    """The day's calendar events, or [] when they can't be had. Never raises: a broken calendar
+    means a casual day, warned about once until the calendar works again."""
+    global _calendar_failing
+    try:
+        evs = calendar(profile, date.fromisoformat(day)) if callable(calendar) else calendar
+        if evs is not None and not isinstance(evs, list):
+            raise TypeError(f"expected a list, got {type(evs).__name__}")
+    except Exception as exc:
+        if not _calendar_failing:
+            log.warning("Calendar lookup failed (%s: %s); picking today's look for a casual day",
+                        type(exc).__name__, exc)
+        _calendar_failing = True
+        return []
+    if _calendar_failing and evs is not None:  # None: nothing was asked
+        log.info("Calendar lookup works again")
+        _calendar_failing = False
+    return evs or []
+
+
+def _weather(weather, day: str) -> dict:
+    """The weather for the day, or {} when it can't be had. Never raises: a broken weather lookup
+    means a look without the weather, warned about once until the weather works again."""
+    global _weather_failing
+    try:
+        wx = weather(date.fromisoformat(day)) if callable(weather) else weather
+        if wx is not None and not isinstance(wx, dict):
+            raise TypeError(f"expected a dict, got {type(wx).__name__}")
+    except Exception as exc:
+        if not _weather_failing:
+            log.warning("Weather lookup failed (%s: %s); picking today's look without the weather",
+                        type(exc).__name__, exc)
+        _weather_failing = True
+        return {}
+    if _weather_failing:
+        log.info("Weather lookup works again")
+        _weather_failing = False
+    return wx or {}
+
+
+def current(conn, profile: dict, day: str | None = None, weather=None, calendar=None) -> dict:
+    """Today's row, built when missing or without a look. Weather and calendar default to Home
+    Assistant's."""
+    return build(conn, profile, day, refresh=False, weather=weather or forecast,
+                 calendar=calendar or calendar_events)
+
+
+def refresh(conn, profile: dict, day: str | None = None, weather=None, calendar=None) -> dict:
+    """Build the day again from scratch."""
+    return build(conn, profile, day, refresh=True, weather=weather or forecast,
+                 calendar=calendar or calendar_events)
 
 
 def forecast(day: date):
     return ha.forecast(day)
+
+
+def calendar_events(profile: dict, day: date) -> list[dict] | None:
+    """The person's calendar events for the day; None without calendars (Home Assistant isn't asked)."""
+    cals = (profile.get("settings") or {}).get("calendars") or []
+    if not cals or not config.SUPERVISOR_TOKEN:
+        return None
+    return ha.calendar_events(cals, day)
 
 
 def next(conn, profile: dict, day: str | None = None, weather=None) -> dict:  # noqa: A001
@@ -163,7 +238,8 @@ def view(conn, profile: dict, row: dict) -> dict:
     summary = ", ".join([names[0]] + [x[:1].lower() + x[1:] for x in names[1:]])
     if len(summary) > MAX_STATE:
         summary = summary[:MAX_STATE - 1].rstrip(", ") + "…"
-    reasons = list(opt.get("reasons") or [])[:3]
+    reasons = ([ctx["occasion_reason"]] if ctx.get("occasion_reason") else []) + list(opt.get("reasons") or [])
+    reasons = reasons[:3]
     return out | {
         "state": summary, "summary": summary, "reason": reasons[0] if reasons else "",
         "reasons": reasons, "warnings": list(opt.get("warnings") or []), "score": opt.get("score"),

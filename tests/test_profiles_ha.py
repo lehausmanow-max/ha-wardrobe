@@ -74,3 +74,15 @@ def test_meta_reports_bridge_off_outside_ha(client):
     data = meta(client)
     assert data["running_in_ha"] is False
     assert data["ha_bridge"] == {"enabled": False, "connected": False, "since": None, "last_error": None}
+
+
+def test_display_name_follows_home_assistant(client):
+    sam = new_profile(client, "Sam")
+    meta(client, uid="u-sam", name="sam", display="Sam")
+    # Renamed in Home Assistant: the next visit updates what Settings shows.
+    data = meta(client, uid="u-sam", name="sam", display="Samantha")
+    assert data["matched_profile"] == sam["id"]
+    assert by_id(data, sam["id"])["settings"]["ha_display_name"] == "Samantha"
+    # No display name sent: the username is shown instead; nothing sent: left alone.
+    assert by_id(meta(client, uid="u-sam", name="sammy"), sam["id"])["settings"]["ha_display_name"] == "sammy"
+    assert by_id(meta(client, uid="u-sam"), sam["id"])["settings"]["ha_display_name"] == "sammy"

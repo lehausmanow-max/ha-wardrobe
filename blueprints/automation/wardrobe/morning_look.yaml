@@ -1,0 +1,133 @@
+blueprint:
+  name: Wardrobe morning look
+  description: >-
+    Shortly before your phone alarm, a notification with today's look from the
+    Wardrobe app: a picture, Wear this and Another. Create one automation per
+    person. The phone needs the Companion app's Next alarm sensor turned on.
+  domain: automation
+  source_url: https://github.com/lehausmanow-max/ha-wardrobe/blob/main/blueprints/automation/wardrobe/morning_look.yaml
+  input:
+    person:
+      name: Wardrobe person
+      description: >-
+        The person's slug in the Wardrobe app: the last part of the sensor
+        Settings shows, e.g. alex for sensor.wardrobe_today_alex. A plain name
+        works too.
+      selector:
+        text:
+    phone:
+      name: Phone
+      description: The phone that gets the notification.
+      selector:
+        device:
+          filter:
+            - integration: mobile_app
+    alarm_sensor:
+      name: Next alarm sensor
+      description: >-
+        The phone's Next alarm sensor from the Companion app (turn it on in
+        the app under Settings, Companion app, Manage sensors).
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: timestamp
+    lead_minutes:
+      name: Minutes before the alarm
+      default: 20
+      selector:
+        number:
+          min: 5
+          max: 90
+          step: 1
+          unit_of_measurement: min
+          mode: slider
+
+mode: queued
+max: 10
+
+trigger_variables:
+  alarm_sensor: !input alarm_sensor
+  lead_minutes: !input lead_minutes
+
+triggers:
+  # True from lead_minutes before the alarm until the alarm. now() makes it re-render every
+  # minute, and a template trigger fires only on the change from false to true: once per alarm.
+  - trigger: template
+    id: morning
+    value_template: >-
+      {% set t = as_timestamp(states(alarm_sensor), none) %}
+      {% if t is none %}false{% else %}
+      {% set left = t - as_timestamp(now()) %}
+      {{ left > 0 and left <= (lead_minutes | float(20)) * 60 and left <= 18 * 3600 }}
+      {% endif %}
+  - trigger: event
+    id: button
+    event_type: mobile_app_notification_action
+
+variables:
+  person: !input person
+  phone: !input phone
+  slug: "{{ person | slugify }}"
+  notify_service: "notify.mobile_app_{{ device_attr(phone, 'name') | slugify }}"
+  tag: "wardrobe-{{ slug }}"
+  wear_action: "WARDROBE_WEAR_{{ slug }}"
+  next_action: "WARDROBE_NEXT_{{ slug }}"
+  # The Wardrobe panel in the sidebar; tapping the notification opens it.
+  panel: /app/e054cba1_wardrobe
+  command: >-
+    {{ 'prepare' if trigger.id == 'morning'
+       else 'wear' if trigger.event.data.action == wear_action
+       else 'next' if trigger.event.data.action == next_action
+       else 'none' }}
+
+actions:
+  # Other notifications' buttons also trigger this; they stop here.
+  - condition: template
+    value_template: "{{ command != 'none' }}"
+  - event: wardrobe_command
+    event_data:
+      profile: "{{ slug }}"
+      action: "{{ command }}"
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ command == 'wear' }}"
+        sequence:
+          - wait_for_trigger:
+              - trigger: event
+                event_type: wardrobe_look_worn
+                event_data:
+                  slug: "{{ slug }}"
+            timeout: "00:01:00"
+            continue_on_timeout: false
+          # Same tag: replaces the morning notification.
+          - action: "{{ notify_service }}"
+            data:
+              title: "Logged: {{ wait.trigger.event.data['items'] | map(attribute='name') | join(', ') }}"
+              message: Have a good day.
+              data:
+                tag: "{{ tag }}"
+                clickAction: "{{ panel }}"
+                url: "{{ panel }}"
+    default:
+      - wait_for_trigger:
+          - trigger: event
+            event_type: wardrobe_look_ready
+            event_data:
+              slug: "{{ slug }}"
+        timeout: "00:01:00"
+        continue_on_timeout: false
+      - variables:
+          look: "{{ wait.trigger.event.data }}"
+      # Same tag each time: Another replaces the notification instead of adding one.
+      - action: "{{ notify_service }}"
+        data:
+          title: >-
+            {{ 'Today: ' ~ look.summary if look.summary and look.summary != 'none' else 'No look today' }}
+          message: "{{ [look.reason, look.weather] | select | join(' · ') }}"
+          data: >-
+            {% set d = {'tag': tag, 'clickAction': panel, 'url': panel,
+                        'actions': [{'action': wear_action, 'title': 'Wear this'},
+                                    {'action': next_action, 'title': 'Another'}]} %}
+            {{ dict(d, image=look.image) if look.image else d }}

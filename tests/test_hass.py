@@ -7,9 +7,10 @@ import logging
 from datetime import datetime, timedelta
 
 import pytest
+from PIL import Image
 from websockets.asyncio.server import serve
 
-from wardrobe import db, ha, hass, today
+from wardrobe import config, db, ha, hass, today
 
 DRY = {"temp_low": 12, "temp_high": 16, "temp": 14, "rain": False, "condition": "cloudy", "source": "forecast"}
 
@@ -77,7 +78,9 @@ def test_prepare_publishes_sensor_and_ready_event(people):
     assert attrs["option"].startswith("1 of ")
     (etype, data), = fake.events
     assert etype == "wardrobe_look_ready"
-    assert set(data) == {"profile_id", "profile", "slug", "entity_id", "summary", "reason", "image", "option", "options"}
+    assert set(data) == {"profile_id", "profile", "slug", "entity_id", "summary", "reason", "image", "option", "options",
+                         "weather"}
+    assert data["weather"] == "12–16 °C"
     assert data["slug"] == "sam" and data["summary"] == state and data["entity_id"] == entity
 
 
@@ -156,6 +159,84 @@ def test_app_endpoints_publish_when_bridge_runs(client, people, monkeypatch):
     client.post("/api/today/next", json={"profile_id": pid})
     client.post("/api/today/wear", json={"profile_id": pid})
     assert calls == [(pid, "wardrobe_look_ready"), (pid, "wardrobe_look_worn")]
+
+
+def test_publish_logs_one_info_line(people, caplog):
+    fake = FakeHA()
+    with caplog.at_level(logging.INFO, logger="wardrobe.hass"):
+        run(dispatch_all(fake, {"profile": "sam", "action": "prepare"}, {"profile": "sam", "action": "next"}))
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Updated today's look")]
+    n = fake.states[0][2]["option"].split(" of ")[1]
+    assert lines == [f"Updated today's look for sam (1 of {n})", f"Updated today's look for sam (2 of {n})"]
+
+
+def _with_photos(pid):
+    from test_today import add
+    with db.connect() as conn:
+        conn.execute("DELETE FROM garments WHERE profile_id = ?", (pid,))
+        for name, cat, sub in (("Navy tee", "top", "t-shirt"), ("White shirt", "top", "shirt"),
+                               ("Grey chinos", "bottom", "chinos"), ("White sneakers", "shoes", "sneakers")):
+            add(conn, pid, name, cat, sub, photo=True)
+
+
+def test_today_picture_is_always_the_current_look(people):
+    pid = people["Sam"]["id"]
+    _with_photos(pid)
+    fake = FakeHA()
+    today_pic = config.HA_MEDIA_DIR / "today-sam.jpg"
+
+    run(dispatch_all(fake, {"profile": "sam", "action": "prepare"}))
+    first = fake.states[-1][2]["image"]
+    assert first.startswith("/media/local/wardrobe/look-sam-")
+    assert today_pic.read_bytes() == (config.HA_MEDIA_DIR / first.rsplit("/", 1)[1]).read_bytes()
+
+    run(dispatch_all(fake, {"profile": "sam", "action": "next"}))
+    second = fake.states[-1][2]["image"]
+    assert second != first
+    assert today_pic.read_bytes() == (config.HA_MEDIA_DIR / second.rsplit("/", 1)[1]).read_bytes()
+
+    # No look: a placeholder, so a dashboard card never shows a broken picture.
+    with db.connect() as conn:
+        conn.execute("UPDATE garments SET status = 'laundry' WHERE profile_id = ?", (pid,))
+    run(dispatch_all(fake, {"profile": "sam", "action": "refresh"}))
+    assert fake.states[-1][1] == "none" and fake.states[-1][2]["image"] is None
+    with Image.open(today_pic) as im:
+        assert im.size == (1080, 1080)
+    assert today_pic.read_bytes() != (config.HA_MEDIA_DIR / second.rsplit("/", 1)[1]).read_bytes()
+
+
+def test_daily_tick_removes_pictures_of_people_who_are_gone(people):
+    config.HA_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    (config.HA_MEDIA_DIR / "today-old_name.jpg").write_bytes(b"x")
+    fake = FakeHA()
+
+    async def scenario():
+        b = hass.Bridge(client=fake, token="t")
+        b._daily_done = datetime.now().date() - timedelta(days=1)
+        await b.tick(datetime.now().replace(hour=4, minute=0))
+
+    run(scenario())
+    left = sorted(f.name for f in config.HA_MEDIA_DIR.glob("today-*.jpg"))
+    assert left == ["today-anna_b.jpg", "today-sam.jpg"]
+
+
+def test_adding_clothes_fills_a_day_without_a_look(client, monkeypatch):
+    monkeypatch.setattr(today, "forecast", lambda day: DRY)
+    calls = []
+    monkeypatch.setattr(hass, "notify_app_change", lambda pid, ev=None: calls.append((pid, ev)))
+    pid = client.post("/api/profiles", json={"name": "Robin"}).json()["id"]
+    assert client.get(f"/api/today?profile_id={pid}").json()["state"] == "none"
+    for name, cat in (("Navy tee", "top"), ("Grey chinos", "bottom"), ("White sneakers", "shoes")):
+        r = client.post("/api/garments", json={"profile_id": pid, "name": name, "category": cat})
+        assert r.status_code == 201, r.text
+    # The sensor (no event) is told each time the day still has no look.
+    assert calls and set(calls) == {(pid, None)}
+    v = client.get(f"/api/today?profile_id={pid}").json()
+    assert v["state"] != "none" and v["items"]
+    # Once there's a look, garment changes don't republish.
+    calls.clear()
+    client.post("/api/garments", json={"profile_id": pid, "name": "Blue jeans", "category": "bottom"})
+    assert calls == []
 
 
 def test_notify_is_a_no_op_without_bridge():

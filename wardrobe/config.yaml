@@ -1,5 +1,5 @@
 name: Wardrobe
-version: "0.4.0"
+version: "0.4.1"
 slug: wardrobe
 description: >-
   A shared wardrobe for your household: garments with photos, outfit
@@ -42,5 +42,6 @@ schema:
   ollama_vision_model: str
   claude_api_key: password?
   claude_model: str
-  weather_entity: str?
+  # An entity ID such as weather.forecast_home; anything else is refused when saving.
+  weather_entity: match(^weather\.[a-z0-9_]+$)?
   log_level: list(debug|info|warning|error)

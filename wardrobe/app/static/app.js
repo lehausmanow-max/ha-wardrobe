@@ -1245,6 +1245,36 @@ async function renderShop(main) {
 }
 
 // ------------------------------------------------------------------ settings
+const OCCASION_WORDS = ["work", "smart", "evening", "sport"];
+
+function profileWords(p) {
+  const stored = p.settings?.words || {};
+  const defaults = S.meta.calendar_words_default || {};
+  return Object.fromEntries(OCCASION_WORDS.map((o) => [o, Array.isArray(stored[o]) ? stored[o] : (defaults[o] || [])]));
+}
+
+// Calendar checkboxes per person, from Home Assistant's calendar entities.
+async function loadCalendars(el) {
+  const boxes = $$("[data-cals]", el);
+  if (!boxes.length) return;
+  const r = await api("GET", "api/ha/calendars").catch(() => ({ available: false, calendars: [] }));
+  for (const box of boxes) {
+    const p = S.meta.profiles.find((x) => x.id === Number(box.dataset.cals));
+    const chosen = p?.settings?.calendars || [];
+    if (!r.available) {
+      box.textContent = S.meta.running_in_ha ? "Couldn't read the calendars from Home Assistant; try again later." : "Calendars come from Home Assistant; not available here.";
+      continue;
+    }
+    const known = new Set(r.calendars.map((c) => c.entity_id));
+    const all = [...r.calendars, ...chosen.filter((id) => !known.has(id)).map((id) => ({ entity_id: id, name: `${id} (not found)` }))];
+    box.innerHTML = all.length
+      ? all.map((c) => `<label class="row small"><input type="checkbox" name="calendar" value="${esc(c.entity_id)}" ${chosen.includes(c.entity_id) ? "checked" : ""}> ${esc(c.name)}</label>`).join("")
+      : "No calendars in Home Assistant.";
+    box.classList.remove("muted");
+    box.dataset.loaded = "1";
+  }
+}
+
 function settingsSheet() {
   const ai = S.meta.ai;
   const aiLine = (k, what) => ai[k].enabled ? `${what}: ${cap(ai[k].provider)}${ai[k].model ? ` (${esc(ai[k].model)})` : ""}` : `${what}: off`;
@@ -1259,6 +1289,13 @@ function settingsSheet() {
         <p class="small muted" style="margin:0">${p.ha_user_id
           ? `Linked to Home Assistant user <strong>${esc(p.settings?.ha_display_name || "(name not known)")}</strong> <button class="btn ghost small" type="button" data-action="unlink-ha" data-id="${p.id}">Unlink</button>`
           : "Not linked yet: open the app once while logged in as this person"}</p>
+        <p class="small muted" style="margin:0">Home Assistant sensor: <code>${esc(p.entity_id || "")}</code></p>
+        <div class="field"><span>Calendars that set today's look</span><div class="cal-list small muted" data-cals="${p.id}">Loading…</div></div>
+        <details class="field words"><summary class="small">Words that set the occasion</summary>
+          ${OCCASION_WORDS.map((o) => `<label class="field"><span>${cap(o)}</span><input type="text" name="words_${o}" value="${esc(profileWords(p)[o].join(", "))}"></label>`).join("")}
+          <p class="small muted" style="margin:0">Comma-separated, whole words, any case. The most formal match of the day wins: evening or smart, then work, then sport.</p>
+          <button class="btn ghost small" type="button" data-action="reset-words" data-id="${p.id}">Reset to defaults</button>
+        </details>
         <label class="field"><span>Style notes, used by the AI stylist</span><textarea name="style_notes" placeholder="Smart casual, prefers muted colours, never skinny jeans">${esc(p.style_notes)}</textarea></label>
         <div class="row"><label class="row small"><input type="color" name="color" value="${esc(p.color)}" style="width:40px;height:32px;border:0;background:none"> Colour</label>
           <span style="flex:1"></span><button class="btn ghost danger" type="button" data-action="delete-profile" data-id="${p.id}" data-name="${esc(p.name)}">Delete</button><button class="btn" type="submit">Save</button></div>
@@ -1281,11 +1318,18 @@ function settingsSheet() {
       ev.preventDefault();
       const f = new FormData(form);
       busy(ev.submitter, async () => {
-        await api("PUT", `api/profiles/${form.dataset.profile}`, { name: f.get("name"), ha_user: f.get("ha_user"), style_notes: f.get("style_notes"), color: f.get("color") });
+        const words = Object.fromEntries(OCCASION_WORDS.map((o) => [o, f.get(`words_${o}`) || ""]));
+        const norm = (v) => String(v).split(",").map((w) => w.trim().toLowerCase()).filter(Boolean).join(",");
+        const defaults = S.meta.calendar_words_default || {};
+        const isDefault = OCCASION_WORDS.every((o) => norm(words[o]) === norm((defaults[o] || []).join(",")));
+        const payload = { name: f.get("name"), ha_user: f.get("ha_user"), style_notes: f.get("style_notes"), color: f.get("color"), words: isDefault ? null : words };
+        if ($(`[data-cals="${form.dataset.profile}"]`, form)?.dataset.loaded) payload.calendars = f.getAll("calendar");
+        await api("PUT", `api/profiles/${form.dataset.profile}`, payload);
         await loadMeta(); toast("Saved");
       });
     };
   });
+  loadCalendars(el);
   $("#addprofile", el).onsubmit = (ev) => {
     ev.preventDefault();
     const name = new FormData(ev.target).get("name");
@@ -1348,6 +1392,12 @@ const actions = {
   }),
   "today-wear": (b) => todayAction(b, "api/today/wear", "Logged for today"),
   "today-next": (b) => todayAction(b, "api/today/next"),
+  "reset-words": (b) => {
+    const form = b.closest("form");
+    const defaults = S.meta.calendar_words_default || {};
+    for (const o of OCCASION_WORDS) form[`words_${o}`].value = (defaults[o] || []).join(", ");
+    toast("Default words filled in; Save to keep them");
+  },
   "unlink-ha": (b) => busy(b, async () => { await api("PUT", `api/profiles/${b.dataset.id}`, { unlink_ha: true }); await loadMeta(); closeSheet(); settingsSheet(); }),
   "wear-look": (b) => busy(b, async () => { await api("POST", `api/looks/${b.dataset.id}/wear`, {}); toast("Logged for today"); }),
   "edit-look": async (b) => { const looks = await api("GET", `api/looks?profile_id=${S.profileId}`); buildLook(looks.find((l) => l.id === Number(b.dataset.id))); },
@@ -1380,6 +1430,19 @@ document.addEventListener("change", (ev) => {
   } else if (el.dataset.change === "scope") { S.laundryAll = el.value === "all"; route(); }
   else if (el.dataset.change === "appearance") { store.set("appearance", el.value); applyTheme(); }
 });
+
+// The Home Assistant Android app up to 2026.10.1 drops every pick from an <input multiple>
+// (home-assistant/android#7548, fixed in #7549) and ignores `capture` (fixed in #7550).
+// There, Gallery picks one photo at a time; later versions and browsers keep multi-select.
+function haAppDropsMultiPick(ua = navigator.userAgent) {
+  if (!/Android/.test(ua) || !/Home Assistant\//.test(ua)) return false;
+  const m = /Home Assistant\/(\d+)\.(\d+)\.(\d+)/.exec(ua);
+  if (!m) return true; // unknown version: one at a time always works
+  const v = m.slice(1).map(Number), fixed = [2026, 10, 2];
+  for (let i = 0; i < 3; i++) if (v[i] !== fixed[i]) return v[i] < fixed[i];
+  return false;
+}
+if (haAppDropsMultiPick()) $("#gallery-file").multiple = false;
 
 for (const id of ["#camera-file", "#gallery-file"]) {
   $(id).addEventListener("change", (ev) => {

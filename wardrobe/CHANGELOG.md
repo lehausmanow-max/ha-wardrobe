@@ -1,4 +1,29 @@
 # Changelog
+## 0.4.1
+
+- Before updating: under Configuration, the weather entity must be just its
+  ID, e.g. weather.forecast_home. Any other value now stops the app from
+  starting.
+- Today's look reads your calendar: an office day dresses for work, a dinner
+  or interview dresses up. Pick your calendars and the words that count
+  under Settings; Dutch and English words are set by default.
+- A morning-notification blueprint: shortly before your phone alarm, a
+  notification with a picture of today's look, Wear this and Another. One
+  automation per person; see Documentation for the import link.
+- Each person's current look is also /media/wardrobe/today-<slug>.jpg, for a
+  picture card on a dashboard; see Documentation.
+- A day without a look is picked again once there are clean clothes; no
+  refresh needed after adding or washing clothes.
+- Settings shows each person's sensor, and the Home Assistant name stays
+  current when it changes there.
+- The app log has one line per sensor update.
+- Fix: a wrong weather setting no longer stops today's look.
+- Fix: in the Home Assistant Android app (2026.10.1 and older), photos picked
+  with Gallery were not added. There, Gallery now picks one photo at a time.
+  Picking several, and Camera opening the camera, return with the next Home
+  Assistant app release (an app bug, fixed there). No database change.
+- No database migration; going back to 0.4.0 stays safe.
+
 ## 0.4.0
 
 - Today's look: the Looks tab opens with a look for today, picked for the

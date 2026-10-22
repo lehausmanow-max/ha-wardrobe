@@ -4,3 +4,5 @@ pytest
 Pillow
 # Starlette's TestClient needs httpx2 (plain httpx is deprecated in Starlette 1.x).
 httpx2
+# Reads config.yaml (and the blueprint) in tests.
+PyYAML

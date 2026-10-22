@@ -22,7 +22,10 @@
   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
   <span>Add</span>
 </button>
-<!-- Camera opens the camera straight away (one photo per tap); Gallery picks several at once. -->
+<!-- Camera opens the camera straight away (one photo per tap); Gallery picks several at once.
+     In the Home Assistant Android app up to 2026.10.1, app.js turns off `multiple` on Gallery:
+     that app drops every pick from a multi-select input and ignores `capture` (both fixed
+     upstream, home-assistant/android #7549 and #7550), so there Gallery picks one at a time. -->
 <input type="file" id="camera-file" accept="image/*" capture="environment" hidden>
 <input type="file" id="gallery-file" accept="image/*" multiple hidden>
 

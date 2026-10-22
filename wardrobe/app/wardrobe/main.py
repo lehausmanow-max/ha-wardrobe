@@ -15,7 +15,7 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Respon
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import ai, care, colors, config, db, fit, ha, hass, images, intake, matching, shopping, taxonomy, today
+from . import agenda, ai, care, colors, config, db, fit, ha, hass, images, intake, matching, shopping, taxonomy, today
 from .garments import enrich, last_worn_map, list_garments, look_ratings
 
 log = logging.getLogger("wardrobe")
@@ -227,9 +227,14 @@ def match_profile(conn, user: dict) -> int | None:
     A name match on a profile that isn't linked yet links it, so from then on the ID decides."""
     profiles = db.rows("profiles", conn.execute("SELECT * FROM profiles ORDER BY id"))
     uid = (user.get("id") or "").strip()
+    shown = (user.get("display_name") or user.get("name") or "").strip()[:80]
     if uid:
         hit = next((p for p in profiles if p.get("ha_user_id") == uid), None)
         if hit:
+            settings = hit.get("settings") or {}
+            if shown and settings.get("ha_display_name") != shown:
+                # Renamed in Home Assistant: keep Settings showing the current name.
+                db.update(conn, "profiles", hit["id"], {"settings": settings | {"ha_display_name": shown}})
             return hit["id"]
     names = {x.lower() for x in (user.get("name"), user.get("display_name")) if x}
     for p in profiles:
@@ -237,8 +242,7 @@ def match_profile(conn, user: dict) -> int | None:
             continue  # linked to someone else
         if (p.get("ha_user") or "").lower() in names or p["name"].lower() in names:
             if uid:
-                settings = (p.get("settings") or {}) | {
-                    "ha_display_name": (user.get("display_name") or user.get("name") or "")[:80]}
+                settings = (p.get("settings") or {}) | {"ha_display_name": shown}
                 db.update(conn, "profiles", p["id"], {"ha_user_id": uid[:64], "settings": settings})
                 log.info("Linked profile %s to its Home Assistant user", p["id"])
             return p["id"]
@@ -249,10 +253,12 @@ async def api_meta(request: Request):
     user = ha.ingress_user(request.headers)
     with db.connect() as conn:
         matched = match_profile(conn, user)
-        profiles = db.rows("profiles", conn.execute("SELECT * FROM profiles ORDER BY id"))
+        profiles = [p | {"slug": today.profile_slug(p), "entity_id": today.entity_id(p)}
+                    for p in db.rows("profiles", conn.execute("SELECT * FROM profiles ORDER BY id"))]
     return ok({"version": config.VERSION, "taxonomy": taxonomy.meta(), "ai": ai.describe(config.OPTIONS),
                "ha_user": user, "matched_profile": matched, "profiles": profiles,
-               "weather_configured": bool(config.OPTIONS.get("weather_entity")),
+               "calendar_words_default": agenda.DEFAULT_WORDS,
+               "weather_configured": bool(ha.weather_entity()),
                "running_in_ha": bool(config.SUPERVISOR_TOKEN), "ha_bridge": hass.status()})
 
 
@@ -291,6 +297,13 @@ async def api_profile(request: Request):
             settings.pop("ha_display_name", None)
             vals["ha_user_id"] = ""
             vals["settings"] = settings
+        if "calendars" in data or "words" in data:
+            try:
+                cleaned = agenda.clean_settings(data)
+            except ValueError as exc:
+                fail(400, str(exc))
+            vals["settings"] = agenda.apply_settings(vals.get("settings", get_profile(conn, pid).get("settings")),
+                                                     cleaned)
         if "color" in data:
             vals["color"] = colors.normalize_hex(data["color"] or "") or "#2b3a67"
         if "style_notes" in data:
@@ -304,6 +317,29 @@ async def api_profile(request: Request):
 
 # ------------------------------------------------------------------ garments
 
+def _ha_calendars() -> dict:
+    if not config.SUPERVISOR_TOKEN:
+        return {"available": False, "calendars": [], "error": "Not running under Home Assistant"}
+    try:
+        return {"available": True, "calendars": ha.calendars(), "error": None}
+    except ha.HAError as exc:
+        log.warning("Couldn't list Home Assistant's calendars: %s", exc)
+        return {"available": False, "calendars": [], "error": "Home Assistant didn't answer"}
+
+
+async def api_ha_calendars(request: Request):
+    return ok(await run_in_threadpool(_ha_calendars))
+
+
+def clothes_changed(conn, pids) -> None:
+    """Clean clothes changed: a day that had no look gets one, and Home Assistant hears of it."""
+    day = db.today()
+    for pid in {int(p) for p in pids if p}:
+        row = today.get_row(conn, pid, day)
+        if row and not row["options"]:
+            hass.notify_app_change(pid)
+
+
 async def api_garments(request: Request):
     with db.connect() as conn:
         if request.method == "POST":
@@ -316,6 +352,7 @@ async def api_garments(request: Request):
                 vals["care"] = care.defaults_for(vals.get("material", ""), vals["category"])
             vals["care"] = care.label_bleach(vals["care"], {})
             gid = db.insert(conn, "garments", vals)
+            clothes_changed(conn, [pid])
             return ok(get_garment(conn, gid), 201)
 
         profile_id = int_param(request, "profile_id", required=True)
@@ -362,6 +399,7 @@ async def api_garment(request: Request):
                 vals["care"] = care.label_bleach(vals["care"], g.get("care") or {})
             vals["updated_at"] = db.now()
             db.update(conn, "garments", gid, vals)
+            clothes_changed(conn, [g["profile_id"]])
             return ok(get_garment(conn, gid))
 
         profile = get_profile(conn, g["profile_id"])
@@ -553,6 +591,8 @@ async def api_laundry_done(request: Request):
         marks = ",".join("?" * len(ids))
         conn.execute(f"UPDATE garments SET status = 'active', last_washed = datetime('now'), "
                      f"updated_at = datetime('now') WHERE id IN ({marks})", ids)
+        clothes_changed(conn, [r[0] for r in conn.execute(
+            f"SELECT DISTINCT profile_id FROM garments WHERE id IN ({marks})", ids)])
     return ok({"washed": ids})
 
 
@@ -949,6 +989,7 @@ routes = [
     Route("/thumbs/{name}", media),
     Mount("/static", StaticFiles(directory=STATIC_DIR), name="static"),
     Route("/api/meta", api_meta),
+    Route("/api/ha/calendars", api_ha_calendars),
     Route("/api/profiles", api_profiles, methods=["GET", "POST"]),
     Route("/api/profiles/{id:int}", api_profile, methods=["PUT", "DELETE"]),
     Route("/api/garments", api_garments, methods=["GET", "POST"]),

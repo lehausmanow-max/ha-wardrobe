@@ -29,8 +29,8 @@ configuration:
   weather_entity:
     name: Weather entity
     description: >-
-      Optional. A weather entity such as weather.forecast_home; the Looks tab
-      then fills in today's temperature.
+      Optional. Only the entity ID, such as weather.forecast_home. Its daily
+      forecast picks today's look, and the Looks tab fills in the temperature.
   log_level:
     name: Log level
     description: How much the app writes to its log

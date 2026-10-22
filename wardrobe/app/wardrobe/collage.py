@@ -3,9 +3,10 @@ written to Home Assistant's media folder."""
 
 import logging
 import re
+import shutil
 from datetime import date, timedelta
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from . import config
 
@@ -15,6 +16,7 @@ TILE = SIDE // 2
 PAD = 24
 BACKGROUND = (236, 235, 232)
 NAME = re.compile(r"^look-.+-(\d{4}-\d{2}-\d{2})-\d+\.jpg$")
+TODAY = re.compile(r"^today-(.+)\.jpg$")
 UPPER = ("top", "knitwear", "outerwear")
 LOWER = ("bottom", "dress")
 
@@ -81,4 +83,49 @@ def cleanup(today: date, keep_days: int = 2) -> int:
                 gone += 1
         except (ValueError, OSError):
             continue
+    return gone
+
+
+def today_name(slug: str) -> str:
+    return f"today-{slug}.jpg"
+
+
+def set_today(slug: str, look_filename: str | None) -> None:
+    """Make today-<slug>.jpg the current look: a copy of its collage, or a plain picture saying
+    there's no look. A dashboard card can always show the same file."""
+    folder = config.HA_MEDIA_DIR
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / today_name(slug)
+    tmp = target.with_suffix(".tmp")
+    if look_filename and (folder / look_filename).exists():
+        shutil.copyfile(folder / look_filename, tmp)
+    else:
+        canvas = Image.new("RGB", (SIDE, SIDE), BACKGROUND)
+        draw = ImageDraw.Draw(canvas)
+        try:
+            font = ImageFont.load_default(size=64)
+        except TypeError:  # older Pillow without sizes
+            font = ImageFont.load_default()
+        text = "No look today"
+        box = draw.textbbox((0, 0), text, font=font)
+        draw.text(((SIDE - (box[2] - box[0])) // 2, (SIDE - (box[3] - box[1])) // 2), text,
+                  fill=(120, 118, 112), font=font)
+        canvas.save(tmp, "JPEG", quality=85)
+    tmp.replace(target)
+
+
+def remove_stale_today(slugs: set[str]) -> int:
+    """Delete today-<slug>.jpg files of people who aren't there any more (or were renamed)."""
+    folder = config.HA_MEDIA_DIR
+    if not folder.is_dir():
+        return 0
+    gone = 0
+    for f in folder.glob("today-*.jpg"):
+        m = TODAY.match(f.name)
+        if m and m.group(1) not in slugs:
+            try:
+                f.unlink()
+                gone += 1
+            except OSError:
+                continue
     return gone

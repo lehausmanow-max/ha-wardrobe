@@ -119,6 +119,21 @@ def test_too_few_garments_gives_none(sam):
         assert today.next(conn, sam, DAY, weather)["pick"] == 0
 
 
+def test_day_without_a_look_is_rebuilt_when_asked(sam):
+    with db.connect() as conn:
+        add(conn, sam["id"], "Navy tee", "top")
+        row = today.current(conn, sam, DAY, weather)
+        assert row["options"] == []
+        # Clothes added since: the next ask builds the day again, no refresh needed.
+        add(conn, sam["id"], "Grey chinos", "bottom", color="#808080")
+        add(conn, sam["id"], "White sneakers", "shoes", color="#f5f5f5")
+        again = today.current(conn, sam, DAY, weather)
+        assert again["id"] == row["id"] and again["options"] and again["pick"] == 0
+        assert "none_reason" not in again["context"]
+        # A day with a look is kept as it is.
+        assert today.current(conn, sam, DAY, lambda d: pytest.fail("rebuilt"))["id"] == row["id"]
+
+
 def test_no_weather_still_builds(sam):
     with db.connect() as conn:
         wardrobe(conn, sam["id"])

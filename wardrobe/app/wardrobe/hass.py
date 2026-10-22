@@ -60,7 +60,7 @@ def event_data(event_type: str, v: dict) -> dict:
                 "items": [{k: i[k] for k in ("id", "name", "category")} for i in v["items"]]}
     return {"profile_id": v["profile_id"], "profile": v["profile"], "slug": v["slug"],
             "entity_id": v["entity_id"], "summary": v["summary"], "reason": v["reason"],
-            "image": v["image"], "option": v["option"], "options": v["options"]}
+            "image": v["image"], "option": v["option"], "options": v["options"], "weather": v["weather"]}
 
 
 class Bridge:
@@ -168,7 +168,11 @@ class Bridge:
             log.warning("wardrobe_command: unknown action %r (use %s)", action, ", ".join(ACTIONS))
             return False
         async with self._lock:
-            pid = await asyncio.to_thread(self._command, ref, action)
+            try:
+                pid = await asyncio.to_thread(self._command, ref, action)
+            except Exception:
+                log.exception("wardrobe_command %s for %r failed", action, ref)
+                return False
             if pid is None:
                 log.warning("wardrobe_command: no profile %r", ref)
                 return False
@@ -187,7 +191,7 @@ class Bridge:
             elif action == "wear":
                 today.wear(conn, p)
             elif action == "refresh":
-                today.build(conn, p, refresh=True, weather=today.forecast)
+                today.refresh(conn, p)
             return p["id"]
 
     # ---------------------------------------------------------------- publishing
@@ -199,12 +203,15 @@ class Bridge:
                 return None
             row = today.current(conn, p)
             v = today.view(conn, p, row)
-            if v["items"]:
-                try:
-                    if not collage.make(v["items"], today.image_name(p, row)):
-                        v["image"] = None
-                except OSError as exc:
-                    log.warning("Couldn't write the look picture: %s", exc)
+            look = today.image_name(p, row) if v["items"] else None
+            try:
+                if look and not collage.make(v["items"], look):
+                    v["image"], look = None, None
+                # The same file name every day, for a dashboard picture card.
+                collage.set_today(v["slug"], look)
+            except OSError as exc:
+                log.warning("Couldn't write the look picture: %s", exc)
+                if look and not (config.HA_MEDIA_DIR / look).exists():
                     v["image"] = None
             return v
 
@@ -214,6 +221,7 @@ class Bridge:
             self._pending.discard(pid)
             return
         self.client.set_state(v["entity_id"], v["state"], sensor_attributes(v))
+        log.info("Updated today's look for %s (%s)", v["slug"], v["option"] or "none")
         if event_type:
             self.client.fire_event(event_type, event_data(event_type, v))
 
@@ -256,10 +264,17 @@ class Bridge:
             except Exception:
                 log.exception("Wardrobe housekeeping failed")
 
+    @staticmethod
+    def _cleanup(day) -> None:
+        collage.cleanup(day)
+        with db.connect() as conn:
+            slugs = {today.profile_slug(p) for p in today.profiles(conn)}
+        collage.remove_stale_today(slugs)
+
     async def tick(self, now: datetime) -> None:
         if now.hour >= DAILY_HOUR and self._daily_done != now.date():
             self._daily_done = now.date()
-            await asyncio.to_thread(collage.cleanup, now.date())
+            await asyncio.to_thread(self._cleanup, now.date())
             self._pending.clear()
             await self.publish_all()
         elif self._pending and self.connected:
@@ -298,7 +313,8 @@ async def stop() -> None:
     bridge = None
 
 
-def notify_app_change(pid: int, event_type: str) -> None:
-    """A look changed in the app: publish it to Home Assistant in the background."""
+def notify_app_change(pid: int, event_type: str | None = None) -> None:
+    """A look (or the clothes it's picked from) changed in the app: publish it to Home Assistant
+    in the background. Without an event type only the sensor is set."""
     if bridge is not None:
         bridge.spawn(bridge.publish(pid, event_type))
